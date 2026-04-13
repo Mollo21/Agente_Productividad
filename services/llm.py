@@ -167,7 +167,7 @@ def execute_tool(name: str, args: dict, phone_number: str) -> str:
         try: return int(str(v).replace('"', '').strip())
         except: return 0
     def safe_float(v):
-        try: return float(str(v).replace('"', '').strip())
+        try: return float(str(v).replace('"', '').replace('$', '').replace(',', '').strip())
         except: return 0.0
 
     def execute_calendar_with_reminder(a):
