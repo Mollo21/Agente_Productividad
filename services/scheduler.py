@@ -56,7 +56,15 @@ def remove_subscription(topic: str, phone_number: str):
     
 async def send_reminder(phone_number: str, text: str):
     """Tarea que envía el recordatorio."""
-    await send_whatsapp_message(phone_number, f"⏰ *Recordatorio:* {text}")
+    import datetime
+    import pytz
+    tz = pytz.timezone(config.TIMEZONE)
+    ahora = datetime.datetime.now(tz)
+    fecha_str = ahora.strftime("%d/%m/%Y")
+    hora_str = ahora.strftime("%H:%M")
+    
+    msg = f"Tienes un evento próximamente\n\nHola tienes un evento llamado {text} próximo a realizarse.\n\nEl evento comienza el {fecha_str} a la(s) {hora_str}"
+    await send_whatsapp_message(phone_number, msg)
 
 def add_reminder(minutos: int, texto: str, phone_number: str):
     """Programa un recordatorio para dentro de X minutos."""
