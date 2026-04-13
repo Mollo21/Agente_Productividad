@@ -19,9 +19,9 @@ def registrar_gasto(monto: str, categoria: str, descripcion: str) -> str:
     return "PENDING"
 
 @tool
-def programar_evento(titulo: str, inicio_iso: str, fin_iso: str) -> str:
-    """Agenda un evento. Las fechas DEBEN estar en formato ISO 8601 con zona horaria (ej: 2024-05-20T15:00:00-04:00)."""
-    return google_api.add_calendar_event(titulo, inicio_iso, fin_iso)
+def programar_evento(titulo: str, inicio_iso: str, fin_iso: str, minutos_aviso: int = 0) -> str:
+    """Agenda un evento en el Calendario. Las fechas DEBEN estar en formato ISO 8601 con zona horaria (ej: 2024-05-20T15:00:00-04:00). Si el usuario pide que le recuerdes X minutos antes del evento, pon los minutos faltantes en 'minutos_aviso' (ej: 15 o 30). Si pide que le recuerdes al iniciar, pon 0."""
+    return "PENDING"
 
 @tool
 def guardar_memoria(categoria: str, detalle: str) -> str:
@@ -86,7 +86,6 @@ Tienes acceso a herramientas para:
 4. Búsqueda (Internet)
 6. Recordatorios (programar avisos en X minutos)
 
-IMPORTANTE: Si agendaste un evento en el Calendario, y vas a decirle al usuario que le vas a recordar (ej. "Te recordaré 30 minutos antes"), entonces TIENES QUE EJECUTAR TAMBIÉN la herramienta `recordar_algo` (calculando los minutos faltantes desde AHORA) para que se agende la alarma en el sistema, de lo contrario el usuario nunca recibirá la alarma de WhatsApp.
 Si la solicitud del usuario requiere usar una herramienta, úsala de inmediato.
 Si el usuario te hace una pregunta general, usa buscar_internet si necesitas datos actuales, sino responde directamente.
 Asegúrate de pasar el 'telefono' extraído del contexto a las herramientas que lo requieran.
@@ -166,9 +165,26 @@ def execute_tool(name: str, args: dict, phone_number: str) -> str:
         try: return float(str(v).replace('"', '').strip())
         except: return 0.0
 
+    def execute_calendar_with_reminder(a):
+        # Insert event
+        r = google_api.add_calendar_event(a['titulo'], a['inicio_iso'], a['fin_iso'])
+        # Schedule reminder
+        if 'minutos_aviso' in a:
+            try:
+                import datetime
+                import dateutil.parser
+                aviso = safe_int(a['minutos_aviso'])
+                dt = dateutil.parser.isoparse(a['inicio_iso'])
+                val_dt = dt - datetime.timedelta(minutes=aviso)
+                scheduler.add_reminder_date(val_dt.isoformat(), a['titulo'], phone_number)
+                r += f" [Alarma programada a las {val_dt.strftime('%H:%M')}]"
+            except Exception as e:
+                pass
+        return r
+
     tool_map = {
         "registrar_gasto": lambda a: google_api.log_expense(safe_float(a['monto']), a['categoria'], a['descripcion']),
-        "programar_evento": lambda a: google_api.add_calendar_event(a['titulo'], a['inicio_iso'], a['fin_iso']),
+        "programar_evento": lambda a: execute_calendar_with_reminder(a),
         "guardar_memoria": lambda a: google_api.save_memory(a['categoria'], a['detalle']),
         "consultar_memoria": lambda a: google_api.search_memory(a['consulta']),
         "buscar_internet": lambda a: search.search_web(a['query']),

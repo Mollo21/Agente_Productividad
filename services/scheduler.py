@@ -81,5 +81,18 @@ def add_reminder(minutos: int, texto: str, phone_number: str):
     )
     return f"Perfecto, te recordaré '{texto}' en {minutos} minutos. ✅"
 
+def add_reminder_date(iso_date: str, texto: str, phone_number: str):
+    """Programa un recordatorio para una fecha ISO específica."""
+    import dateutil.parser
+    run_at = dateutil.parser.isoparse(iso_date)
+    
+    scheduler.add_job(
+        send_reminder,
+        'date',
+        run_date=run_at,
+        args=[phone_number, texto]
+    )
+    return f"Perfecto, te recordaré '{texto}' a la hora solicitada."
+
 def start_scheduler():
     scheduler.start()
