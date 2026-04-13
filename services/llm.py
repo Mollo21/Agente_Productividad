@@ -14,9 +14,9 @@ llm = ChatGroq(
 )
 
 @tool
-def registrar_gasto(monto: float, categoria: str, descripcion: str) -> str:
-    """Registra un gasto económico. Uso: registrar_gasto(5000, 'Comida', 'Almuerzo McDonald\'s')"""
-    return google_api.log_expense(monto, categoria, descripcion)
+def registrar_gasto(monto: str, categoria: str, descripcion: str) -> str:
+    """Registra un gasto económico. 'monto' puede ser un número o texto."""
+    return "PENDING"
 
 @tool
 def programar_evento(titulo: str, inicio_iso: str, fin_iso: str) -> str:
@@ -44,9 +44,9 @@ def crear_suscripcion(tema: str) -> str:
     return "PENDING_USER_PHONE" # Se manejará en execute_tool
 
 @tool
-def recordar_algo(minutos: int, texto: str) -> str:
-    """Programa un recordatorio a futuro. 'minutos' debe ser un número entero (ej: 10)."""
-    return "PENDING_USER_PHONE" # Se manejará en execute_tool
+def recordar_algo(minutos: str, texto: str) -> str:
+    """Programa un recordatorio a futuro. 'minutos' puede ser un número o texto."""
+    return "PENDING_USER_PHONE"
 
 @tool
 def cancelar_suscripcion(tema: str) -> str:
@@ -145,15 +145,23 @@ async def agent_process(text: str, phone_number: str) -> str:
         return f"Ups! Ocurrió un error en mi cerebro... 🧠⚡️ ({str(e)})"
 
 def execute_tool(name: str, args: dict, phone_number: str) -> str:
+    # Función auxiliar para convertir a int/float de forma segura
+    def safe_int(v):
+        try: return int(str(v).replace('"', '').strip())
+        except: return 0
+    def safe_float(v):
+        try: return float(str(v).replace('"', '').strip())
+        except: return 0.0
+
     tool_map = {
-        "registrar_gasto": lambda a: google_api.log_expense(a['monto'], a['categoria'], a['descripcion']),
+        "registrar_gasto": lambda a: google_api.log_expense(safe_float(a['monto']), a['categoria'], a['descripcion']),
         "programar_evento": lambda a: google_api.add_calendar_event(a['titulo'], a['inicio_iso'], a['fin_iso']),
         "guardar_memoria": lambda a: google_api.save_memory(a['categoria'], a['detalle']),
         "consultar_memoria": lambda a: google_api.search_memory(a['consulta']),
         "buscar_internet": lambda a: search.search_web(a['query']),
         "crear_suscripcion": lambda a: scheduler.add_subscription(a['tema'], "0 9 * * *", phone_number),
         "cancelar_suscripcion": lambda a: scheduler.remove_subscription(a['tema'], phone_number),
-        "recordar_algo": lambda a: scheduler.add_reminder(int(a['minutos']), a['texto'], phone_number)
+        "recordar_algo": lambda a: scheduler.add_reminder(safe_int(a['minutos']), a['texto'], phone_number)
     }
     
     if name in tool_map:
