@@ -19,6 +19,11 @@ def registrar_gasto(monto: str, categoria: str, descripcion: str) -> str:
     return "PENDING"
 
 @tool
+def consultar_gastos(mes_busqueda: str = "") -> str:
+    """Consulta y sumariza los gastos financieros registrados. 'mes_busqueda' es opcional, ej: 'abril', '2024-04'."""
+    return google_api.get_expenses(mes_busqueda)
+
+@tool
 def programar_evento(titulo: str, inicio_iso: str, fin_iso: str, minutos_aviso: int = 0) -> str:
     """Agenda un evento en el Calendario. Las fechas DEBEN estar en formato ISO 8601 con zona horaria (ej: 2024-05-20T15:00:00-04:00). Si el usuario pide que le recuerdes X minutos antes del evento, pon los minutos faltantes en 'minutos_aviso' (ej: 15 o 30). Si pide que le recuerdes al iniciar, pon 0."""
     return "PENDING"
@@ -54,7 +59,7 @@ def cancelar_suscripcion(tema: str) -> str:
     return "PENDING_USER_PHONE" # Se manejará en execute_tool
 
 # Bind tools
-tools = [registrar_gasto, programar_evento, guardar_memoria, consultar_memoria, buscar_internet, crear_suscripcion, cancelar_suscripcion, recordar_algo]
+tools = [registrar_gasto, consultar_gastos, programar_evento, guardar_memoria, consultar_memoria, buscar_internet, crear_suscripcion, cancelar_suscripcion, recordar_algo]
 llm_with_tools = llm.bind_tools(tools)
 
 system_prompt = """Eres el Asistente Personal de Vida (Personal AI OS) del usuario.
@@ -80,7 +85,7 @@ Cuando confirmes que has agendado un evento o creado un recordatorio, tu respues
 Estamos en Chile (considera esto para horarios, moneda CLP y contexto).
 
 Tienes acceso a herramientas para:
-1. Finanzas (registrar gastos)
+1. Finanzas (registrar_gasto y consultar_gastos para ver los históricos de la planilla)
 2. Calendario (agendar en Google Calendar)
 3. Memoria/Relaciones (guardar y recordar datos)
 4. Búsqueda (Internet)
@@ -184,6 +189,7 @@ def execute_tool(name: str, args: dict, phone_number: str) -> str:
 
     tool_map = {
         "registrar_gasto": lambda a: google_api.log_expense(safe_float(a['monto']), a['categoria'], a['descripcion']),
+        "consultar_gastos": lambda a: google_api.get_expenses(a.get('mes_busqueda', '')),
         "programar_evento": lambda a: execute_calendar_with_reminder(a),
         "guardar_memoria": lambda a: google_api.save_memory(a['categoria'], a['detalle']),
         "consultar_memoria": lambda a: google_api.search_memory(a['consulta']),

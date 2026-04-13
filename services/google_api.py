@@ -49,6 +49,44 @@ def log_expense(amount: float, category: str, description: str):
     except Exception as e:
         return f"Error guardando en Sheets: {e}"
 
+def get_expenses(mes_str: str = ""):
+    """Obtiene un resumen de los gastos recientes. Muestra los últimos 20, o busca coincidencias básicas si se provee mes."""
+    if not sheets_service or not config.GOOGLE_SHEETS_ID:
+        return "No se ha configurado Google Sheets."
+    try:
+        result = sheets_service.spreadsheets().values().get(
+            spreadsheetId=config.GOOGLE_SHEETS_ID,
+            range="Finanzas!A:D"
+        ).execute()
+        rows = result.get('values', [])
+        if not rows:
+            return "No tienes gastos registrados."
+        
+        # Omitir header si existe ('Fecha', 'Monto', etc)
+        if rows and rows[0][0].lower() == 'fecha':
+            rows = rows[1:]
+
+        # Si se solicita texto/mes, filtrar
+        if mes_str:
+            matches = [r for r in rows if mes_str.lower() in str(r).lower()]
+        else:
+            matches = rows[-20:] # últimos 20
+            
+        if not matches:
+            return f"No hay gastos para la búsqueda: {mes_str}"
+
+        lines = [f"📅 {r[0][:10]} | 💰 ${r[1]} | 🟢 {r[2]} | 📝 {r[3] if len(r)>3 else ''}" for r in matches]
+        
+        # Tratar de calcular total
+        total = 0.0
+        for r in matches:
+            try: total += float(str(r[1]).replace(',', '').replace('$', '').strip())
+            except: pass
+            
+        return f"📊 *Resumen de Gastos*\nTotal acumulado en este reporte: ${total:,.0f}\n\n" + "\n".join(lines)
+    except Exception as e:
+        return f"Error leyendo gastos: {e}"
+
 # --- CALENDARIO ---
 def add_calendar_event(summary: str, start_time: str, end_time: str):
     """start_time y end_time deben ser ISO format ej: 2024-05-20T15:00:00-04:00"""
