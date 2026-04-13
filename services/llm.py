@@ -147,7 +147,7 @@ async def agent_process(text: str, phone_number: str) -> str:
 def execute_tool(name: str, args: dict, phone_number: str) -> str:
     tool_map = {
         "registrar_gasto": lambda a: google_api.log_expense(a['monto'], a['categoria'], a['descripcion']),
-        "programar_evento": lambda a: google_api.add_calendar_event(a['summary'], a['start_time'], a['end_time']),
+        "programar_evento": lambda a: google_api.add_calendar_event(a['titulo'], a['inicio_iso'], a['fin_iso']),
         "guardar_memoria": lambda a: google_api.save_memory(a['categoria'], a['detalle']),
         "consultar_memoria": lambda a: google_api.search_memory(a['consulta']),
         "buscar_internet": lambda a: search.search_web(a['query']),
