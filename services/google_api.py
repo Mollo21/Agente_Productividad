@@ -10,12 +10,24 @@ SCOPES = [
 ]
 
 def get_google_services():
-    if not os.path.exists(config.GOOGLE_CREDENTIALS_FILE):
+    creds_path = config.GOOGLE_CREDENTIALS_FILE
+    # Intentar encontrar el archivo si el path es relativo
+    if not os.path.isabs(creds_path):
+        # Buscar en el mismo directorio que config.py o el cwd
+        possible_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), creds_path)
+        if os.path.exists(possible_path):
+            creds_path = possible_path
+
+    if not os.path.exists(creds_path):
         return None, None
-    creds = Credentials.from_service_account_file(config.GOOGLE_CREDENTIALS_FILE, scopes=SCOPES)
-    sheets_service = build('sheets', 'v4', credentials=creds)
-    calendar_service = build('calendar', 'v3', credentials=creds)
-    return sheets_service, calendar_service
+    
+    try:
+        creds = Credentials.from_service_account_file(creds_path, scopes=SCOPES)
+        sheets_service = build('sheets', 'v4', credentials=creds)
+        calendar_service = build('calendar', 'v3', credentials=creds)
+        return sheets_service, calendar_service
+    except Exception as e:
+        return None, None
 
 sheets_service, calendar_service = get_google_services()
 

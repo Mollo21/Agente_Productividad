@@ -1,7 +1,9 @@
 import os
 from dotenv import load_dotenv
 
-load_dotenv()
+# Cargar variables de entorno desde el mismo directorio que este archivo
+basedir = os.path.abspath(os.path.dirname(__file__))
+load_dotenv(os.path.join(basedir, ".env"))
 
 # WhatsApp Cloud API config
 WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
