@@ -54,5 +54,24 @@ def remove_subscription(topic: str, phone_number: str):
         return f"Suscripción de '{topic}' cancelada correctamente."
     return f"No tenías ninguna suscripción activa para '{topic}'."
     
+async def send_reminder(phone_number: str, text: str):
+    """Tarea que envía el recordatorio."""
+    await send_whatsapp_message(phone_number, f"⏰ *Recordatorio:* {text}")
+
+def add_reminder(minutos: int, texto: str, phone_number: str):
+    """Programa un recordatorio para dentro de X minutos."""
+    import datetime
+    import pytz
+    tz = pytz.timezone(config.TIMEZONE)
+    run_at = datetime.datetime.now(tz) + datetime.timedelta(minutes=minutos)
+    
+    scheduler.add_job(
+        send_reminder,
+        'date',
+        run_date=run_at,
+        args=[phone_number, texto]
+    )
+    return f"Perfecto, te recordaré '{texto}' en {minutos} minutos. ✅"
+
 def start_scheduler():
     scheduler.start()

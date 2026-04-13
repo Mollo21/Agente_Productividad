@@ -1,7 +1,7 @@
 import httpx
 import config
 from langchain_groq import ChatGroq
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, ToolMessage
 from langchain_core.tools import tool
 from services import google_api, search, scheduler
 import json
@@ -44,16 +44,26 @@ def crear_suscripcion(tema: str, telefono: str) -> str:
     return scheduler.add_subscription(tema, "0 9 * * *", telefono)
 
 @tool
+def recordar_algo(minutos: int, texto: str, telefono: str) -> str:
+    """Programa un recordatorio a futuro. Usa esto si el usuario pide recordarle algo en X minutos o tiempo determinado. 'minutos' debe ser un entero."""
+    return scheduler.add_reminder(minutos, texto, telefono)
+
+@tool
 def cancelar_suscripcion(tema: str, telefono: str) -> str:
     """Cancela una alerta recurrente previamente suscrita."""
     return scheduler.remove_subscription(tema, telefono)
 
 # Bind tools
-tools = [registrar_gasto, programar_evento, guardar_memoria, consultar_memoria, buscar_internet, crear_suscripcion, cancelar_suscripcion]
+tools = [registrar_gasto, programar_evento, guardar_memoria, consultar_memoria, buscar_internet, crear_suscripcion, cancelar_suscripcion, recordar_algo]
 llm_with_tools = llm.bind_tools(tools)
 
 system_prompt = """Eres el Asistente Personal de Vida (Personal AI OS) del usuario.
 Tu interfaz es WhatsApp. Sé conciso, amigable y directo. (Usa emojis donde aporte).
+
+CRÍTICO: Cuando el usuario te pida recordarle algo o agendar algo, HAZLO DE INMEDIATO usando la herramienta correspondiente. 
+NO hagas preguntas de confirmación si tienes la información mínima necesaria. 
+Si el usuario dice "recuérdame en 10 minutos tal cosa", simplemente usa 'recordar_algo' y responde confirmando con "Perfecto, te recordaré...".
+
 Estamos en Chile (considera esto para horarios, moneda CLP y contexto).
 
 Tienes acceso a herramientas para:
@@ -62,39 +72,75 @@ Tienes acceso a herramientas para:
 3. Memoria/Relaciones (guardar y recordar datos)
 4. Búsqueda (Internet)
 5. Suscripciones (envíos recurrentes diarios a las 9 AM)
+6. Recordatorios (programar avisos en X minutos)
 
 Si la solicitud del usuario requiere usar una herramienta, úsala de inmediato.
 Si el usuario te hace una pregunta general, usa buscar_internet si necesitas datos actuales, sino responde directamente.
-Si creas una suscripción, asegúrate de pasar el 'telefono' extraido del contexto de la conversación.
+Asegúrate de pasar el 'telefono' extraído del contexto a las herramientas que lo requieran.
 """
 
+# Diccionario simple en memoria para el historial de conversaciones por usuario
+# En producción, usar Redis o SQL
+chat_history = {}
+
 async def agent_process(text: str, phone_number: str) -> str:
-    """Procesa el mensaje del usuario y decide qué hacer."""
-    messages = [
-        SystemMessage(content=system_prompt + f"\nEl número de teléfono del usuario actual es {phone_number}."),
-        HumanMessage(content=text)
-    ]
+    import datetime
+    import pytz
+    
+    # Obtener o inicializar historial del usuario
+    if phone_number not in chat_history:
+        chat_history[phone_number] = []
+    
+    # Limitar historial a los últimos 10 mensajes para no exceder tokens
+    history = chat_history[phone_number][-10:]
+    
+    # Obtener hora actual en Chile
+    tz = pytz.timezone(config.TIMEZONE)
+    ahora = datetime.datetime.now(tz)
+    fecha_hora_str = ahora.strftime("%A, %d de %B de %Y, %H:%M:%S")
+
+    system_msg = SystemMessage(content=system_prompt + f"\nLa fecha y hora actual en Chile es: {fecha_hora_str}.\nEl número de teléfono del usuario actual es {phone_number}.")
+    user_msg = HumanMessage(content=text)
+    
+    messages = [system_msg] + history + [user_msg]
     
     try:
         response = llm_with_tools.invoke(messages)
         
-        # Check if the LLM decided to use a tool
-        if response.tool_calls:
-            # Procesar llamadas a herramientas
-            results = []
+        # Guardar mensaje del usuario en el historial
+        chat_history[phone_number].append(user_msg)
+        
+        # Si el LLM decide usar herramientas
+        while response.tool_calls:
+            # Guardar la respuesta del asistente (con tool_calls) en el historial antes de responder con el resultado
+            chat_history[phone_number].append(response)
+            messages.append(response)
+            
             for tool_call in response.tool_calls:
                 tool_name = tool_call["name"]
                 tool_args = tool_call["args"]
                 
                 # Ejecutar herramienta
-                # En un sistema en producción usaríamos AgentExecutor, pero lo hacemos directo por simplicidad
                 result_str = execute_tool(tool_name, tool_args)
-                results.append(result_str)
+                
+                # Crear mensaje de resultado de herramienta
+                tool_msg = ToolMessage(
+                    content=result_str,
+                    tool_call_id=tool_call["id"]
+                )
+                messages.append(tool_msg)
+                chat_history[phone_number].append(tool_msg)
             
-            # Devolver reporte al usuario
-            return "\n".join(results)
-        else:
-            return response.content
+            # Invocar al LLM de nuevo con los resultados para que genere la respuesta final humana
+            response = llm_with_tools.invoke(messages)
+            
+        # Al final, 'response' contendrá la respuesta textual humana (sin más tool_calls)
+        chat_history[phone_number].append(response)
+        
+        # Mantener historial corto
+        chat_history[phone_number] = chat_history[phone_number][-20:]
+        
+        return response.content
     except Exception as e:
         return f"Ups! Ocurrió un error en mi cerebro... 🧠⚡️ ({str(e)})"
 
