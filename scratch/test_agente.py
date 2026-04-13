@@ -9,7 +9,7 @@ from services import llm
 
 async def main():
     print("--- INICIANDO TEST LOCAL ---")
-    user_text = "recuerdame en 2 minutos test"
+    user_text = "Agenda una reunión con Juan para mañana a las 3 PM"
     phone = "123456789"
     
     print(f"Enviando mensaje: '{user_text}'")
