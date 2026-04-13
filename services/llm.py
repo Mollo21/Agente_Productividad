@@ -39,19 +39,19 @@ def buscar_internet(query: str) -> str:
     return search.search_web(query)
 
 @tool
-def crear_suscripcion(tema: str, telefono: str) -> str:
-    """Crea una alerta recurrente que envía info todos los días a las 9 AM sobre un tema (ej: 'IPSA', 'Precio Cobre'). El telefono es el numero del usuario."""
-    return scheduler.add_subscription(tema, "0 9 * * *", telefono)
+def crear_suscripcion(tema: str) -> str:
+    """Crea una alerta recurrente que envía info todos los días a las 9 AM sobre un tema (ej: 'IPSA', 'Precio Cobre')."""
+    return "PENDING_USER_PHONE" # Se manejará en execute_tool
 
 @tool
-def recordar_algo(minutos: int, texto: str, telefono: str) -> str:
-    """Programa un recordatorio a futuro. Usa esto si el usuario pide recordarle algo en X minutos o tiempo determinado. 'minutos' debe ser un entero."""
-    return scheduler.add_reminder(minutos, texto, telefono)
+def recordar_algo(minutos: int, texto: str) -> str:
+    """Programa un recordatorio a futuro. 'minutos' debe ser un número entero (ej: 10)."""
+    return "PENDING_USER_PHONE" # Se manejará en execute_tool
 
 @tool
-def cancelar_suscripcion(tema: str, telefono: str) -> str:
-    """Cancela una alerta recurrente previamente suscrita."""
-    return scheduler.remove_subscription(tema, telefono)
+def cancelar_suscripcion(tema: str) -> str:
+    """Cancela una alerta recurrente."""
+    return "PENDING_USER_PHONE" # Se manejará en execute_tool
 
 # Bind tools
 tools = [registrar_gasto, programar_evento, guardar_memoria, consultar_memoria, buscar_internet, crear_suscripcion, cancelar_suscripcion, recordar_algo]
@@ -120,8 +120,8 @@ async def agent_process(text: str, phone_number: str) -> str:
                 tool_name = tool_call["name"]
                 tool_args = tool_call["args"]
                 
-                # Ejecutar herramienta
-                result_str = execute_tool(tool_name, tool_args)
+                # Ejecutar herramienta e inyectar el número de teléfono si es necesario
+                result_str = execute_tool(tool_name, tool_args, phone_number)
                 
                 # Crear mensaje de resultado de herramienta
                 tool_msg = ToolMessage(
@@ -144,10 +144,23 @@ async def agent_process(text: str, phone_number: str) -> str:
     except Exception as e:
         return f"Ups! Ocurrió un error en mi cerebro... 🧠⚡️ ({str(e)})"
 
-def execute_tool(name: str, args: dict) -> str:
-    tool_map = {t.name: t for t in tools}
+def execute_tool(name: str, args: dict, phone_number: str) -> str:
+    tool_map = {
+        "registrar_gasto": lambda a: google_api.log_expense(a['monto'], a['categoria'], a['descripcion']),
+        "programar_evento": lambda a: google_api.add_calendar_event(a['summary'], a['start_time'], a['end_time']),
+        "guardar_memoria": lambda a: google_api.save_memory(a['categoria'], a['detalle']),
+        "consultar_memoria": lambda a: google_api.search_memory(a['consulta']),
+        "buscar_internet": lambda a: search.search_web(a['query']),
+        "crear_suscripcion": lambda a: scheduler.add_subscription(a['tema'], "0 9 * * *", phone_number),
+        "cancelar_suscripcion": lambda a: scheduler.remove_subscription(a['tema'], phone_number),
+        "recordar_algo": lambda a: scheduler.add_reminder(int(a['minutos']), a['texto'], phone_number)
+    }
+    
     if name in tool_map:
-        return tool_map[name].invoke(args)
+        try:
+            return tool_map[name](args)
+        except Exception as e:
+            return f"Error ejecutando {name}: {str(e)}"
     return "Herramienta no encontrada."
 
 async def transcribe_audio(audio_bytes: bytes) -> str:
