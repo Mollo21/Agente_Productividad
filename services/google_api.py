@@ -67,7 +67,7 @@ def add_calendar_event(summary: str, start_time: str, end_time: str):
       },
     }
     try:
-        event = calendar_service.events().insert(calendarId='diegomollo65@gmail.com', body=event).execute()
+        event = calendar_service.events().insert(calendarId='primary', body=event).execute()
         return f"Evento creado: {summary}. Link: {event.get('htmlLink')}"
     except Exception as e:
         return f"Error creando evento: {e}"
