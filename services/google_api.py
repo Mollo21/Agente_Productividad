@@ -95,22 +95,86 @@ def log_expense(amount: float, category: str, description: str):
         return f"✅ Gasto registrado: ${amount:,.0f} en {category}"
     except Exception as e: return f"❌ Error Sheets: {e}"
 
-def get_expenses(mes_str: str = ""):
-    if not sheets_service: return "❌ No Sheets"
+def get_expenses(mes_busqueda: str = ""):
+    if not sheets_service or not config.GOOGLE_SHEETS_ID: return "❌ No Sheets"
     try:
         result = sheets_service.spreadsheets().values().get(
             spreadsheetId=config.GOOGLE_SHEETS_ID, range="Finanzas!A:D"
         ).execute()
         rows = result.get('values', [])
-        if not rows: return "No hay gastos."
-        matches = rows[-20:]
-        total = 0
-        for r in matches:
-            if len(r)>1:
-                try: total += float(str(r[1]).replace(',','').replace('$',''))
-                except: pass
-        return f"📊 *Resumen Gastos*\nTotal últimos 20: ${total:,.0f}"
-    except: return "Error leyendo gastos."
+        if not rows or len(rows) <= 1: return "No hay gastos registrados aún en tu planilla."
+        
+        # Saltamos cabeceras y nos quedamos con los datos
+        data_rows = rows[1:]
+        
+        # Determinar mes y año a buscar (Chile Time)
+        tz = pytz.timezone(config.TIMEZONE)
+        ahora = datetime.datetime.now(tz)
+        target_month = ahora.month
+        target_year = ahora.year
+        
+        meses_map = {
+            "enero": 1, "febrero": 2, "marzo": 3, "abril": 4, "mayo": 5, "junio": 6,
+            "julio": 7, "agosto": 8, "septiembre": 9, "octubre": 10, "noviembre": 11, "diciembre": 12
+        }
+        
+        if mes_busqueda:
+            mes_busqueda_lower = mes_busqueda.lower()
+            for m_name, m_num in meses_map.items():
+                if m_name in mes_busqueda_lower:
+                    target_month = m_num
+                    break
+        
+        filtered_rows = []
+        for r in data_rows:
+            if len(r) < 2: continue
+            try:
+                # La fecha está en r[0] como "YYYY-MM-DD HH:MM:SS" o similar
+                # Intentamos parsear la fecha del registro
+                date_dt = dateutil.parser.parse(r[0])
+                if date_dt.month == target_month and date_dt.year == target_year:
+                    filtered_rows.append(r)
+            except:
+                continue
+                
+        if not filtered_rows:
+            mes_nombre = [k for k, v in meses_map.items() if v == target_month][0].capitalize()
+            return f"No encontré gastos registrados para el mes de {mes_nombre} {target_year}."
+            
+        # Agrupar por categoría
+        summary = {}
+        total_general = 0
+        for r in filtered_rows:
+            try:
+                monto = float(str(r[1]).replace(',','').replace('$','').replace('.','').strip())
+                # En Chile a veces el punto es separador de miles, pero float() espera punto como decimal.
+                # Si es CLP, usualmente no hay decimales. Tratamos de limpiar lo mejor posible.
+                cat = r[2] if len(r) > 2 else "Sin Categoría"
+                summary[cat] = summary.get(cat, 0) + monto
+                total_general += monto
+            except:
+                continue
+        
+        # Formatear respuesta
+        nombre_mes_actual = [k for k, v in meses_map.items() if v == target_month][0].capitalize()
+        
+        msg = f"📊 *Resumen de Gastos - {nombre_mes_actual} {target_year}*\n"
+        msg += "══════════════════\n"
+        
+        # Ordenar categorías por monto (descendente)
+        sorted_cats = sorted(summary.items(), key=lambda x: x[1], reverse=True)
+        
+        for cat, total in sorted_cats:
+            msg += f"• *{cat}*: ${total:,.0f}\n"
+            
+        msg += "══════════════════\n"
+        msg += f"💰 *TOTAL MENSUAL: ${total_general:,.0f}*\n"
+        msg += "\n¿Te gustaría ver el detalle de algún gasto en específico?"
+        
+        return msg
+    except Exception as e:
+        logger.error(f"Error en get_expenses: {e}", exc_info=True)
+        return "Hubo un error al leer tu planilla de finanzas. Revisa que el ID sea correcto y tenga permisos."
 
 # --- CALENDARIO ---
 def add_calendar_event(summary: str, start_iso: str, end_iso: str, all_day: bool = False):

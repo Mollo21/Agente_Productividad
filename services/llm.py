@@ -112,7 +112,10 @@ def registrar_gasto(monto: str, categoria: str, descripcion: str) -> str:
 
 @tool
 def consultar_gastos(mes_busqueda: str = "") -> str:
-    """Consulta los gastos registrados del usuario."""
+    """Consulta los gastos del usuario y genera un reporte resumido agrupado por categorías.
+    Usa esta herramienta cuando el usuario pida un resumen, balance, reporte mensual o quiera saber cuánto ha gastado.
+    Opcionalmente acepta el nombre de un mes (ej: 'marzo') para filtrar.
+    """
     return google_api.get_expenses(mes_busqueda)
 
 @tool
