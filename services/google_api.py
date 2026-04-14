@@ -3,11 +3,17 @@ from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 import config
 import datetime
+import pytz
+import logging
+
+logger = logging.getLogger(__name__)
 
 SCOPES = [
     'https://www.googleapis.com/auth/spreadsheets',
     'https://www.googleapis.com/auth/calendar'
 ]
+
+CALENDAR_ID = 'diegomollo65@gmail.com'
 
 def get_google_services():
     creds_path = config.GOOGLE_CREDENTIALS_FILE
@@ -19,6 +25,7 @@ def get_google_services():
             creds_path = possible_path
 
     if not os.path.exists(creds_path):
+        logger.error(f"Archivo de credenciales no encontrado: {creds_path}")
         return None, None
     
     try:
@@ -27,6 +34,7 @@ def get_google_services():
         calendar_service = build('calendar', 'v3', credentials=creds)
         return sheets_service, calendar_service
     except Exception as e:
+        logger.error(f"Error inicializando servicios de Google: {e}")
         return None, None
 
 sheets_service, calendar_service = get_google_services()
@@ -45,12 +53,12 @@ def log_expense(amount: float, category: str, description: str):
             valueInputOption="USER_ENTERED",
             body=body
         ).execute()
-        return f"Gasto registrado: ${amount} en {category} ({description})"
+        return f"✅ Gasto registrado: ${amount:,.0f} en {category} ({description})"
     except Exception as e:
         return f"Error guardando en Sheets: {e}"
 
 def get_expenses(mes_str: str = ""):
-    """Obtiene un resumen de los gastos recientes. Muestra los últimos 20, o busca coincidencias básicas si se provee mes."""
+    """Obtiene un resumen de los gastos recientes."""
     if not sheets_service or not config.GOOGLE_SHEETS_ID:
         return "No se ha configurado Google Sheets."
     try:
@@ -89,9 +97,9 @@ def get_expenses(mes_str: str = ""):
 
 # --- CALENDARIO ---
 def add_calendar_event(summary: str, start_time: str, end_time: str):
-    """start_time y end_time deben ser ISO format ej: 2024-05-20T15:00:00-04:00"""
+    """Crea un evento en Google Calendar. start_time y end_time deben ser ISO format."""
     if not calendar_service:
-        return "No se ha configurado Google Calendar."
+        return "❌ No se ha configurado Google Calendar."
     
     event = {
       'summary': summary,
@@ -105,10 +113,63 @@ def add_calendar_event(summary: str, start_time: str, end_time: str):
       },
     }
     try:
-        event = calendar_service.events().insert(calendarId='diegomollo65@gmail.com', body=event).execute()
-        return f"Evento creado: {summary}. Link: {event.get('htmlLink')}"
+        event = calendar_service.events().insert(calendarId=CALENDAR_ID, body=event).execute()
+        return f"✅ Evento '{summary}' creado en Google Calendar. Link: {event.get('htmlLink')}"
     except Exception as e:
-        return f"Error creando evento: {e}"
+        logger.error(f"Error creando evento en Calendar: {e}")
+        return f"❌ Error creando evento: {e}"
+
+
+def get_calendar_events(time_min: str, time_max: str) -> str:
+    """Obtiene eventos del calendario entre dos fechas ISO."""
+    if not calendar_service:
+        return "❌ No se ha configurado Google Calendar."
+    
+    try:
+        # Asegurar formato correcto para la API
+        import dateutil.parser
+        dt_min = dateutil.parser.isoparse(time_min)
+        dt_max = dateutil.parser.isoparse(time_max)
+        
+        # La API de Calendar requiere formato RFC3339
+        if dt_min.tzinfo is None:
+            tz = pytz.timezone(config.TIMEZONE)
+            dt_min = tz.localize(dt_min)
+        if dt_max.tzinfo is None:
+            tz = pytz.timezone(config.TIMEZONE)
+            dt_max = tz.localize(dt_max)
+        
+        events_result = calendar_service.events().list(
+            calendarId=CALENDAR_ID,
+            timeMin=dt_min.isoformat(),
+            timeMax=dt_max.isoformat(),
+            maxResults=20,
+            singleEvents=True,
+            orderBy='startTime'
+        ).execute()
+        
+        events = events_result.get('items', [])
+        
+        if not events:
+            return f"📅 No tienes eventos programados entre {dt_min.strftime('%d/%m/%Y')} y {dt_max.strftime('%d/%m/%Y')}."
+        
+        lines = []
+        for event in events:
+            start = event['start'].get('dateTime', event['start'].get('date'))
+            try:
+                start_dt = dateutil.parser.isoparse(start)
+                fecha_str = start_dt.strftime('%d/%m/%Y %H:%M')
+            except:
+                fecha_str = start
+            
+            summary = event.get('summary', 'Sin título')
+            lines.append(f"• 📅 {fecha_str} — {summary}")
+        
+        return f"📋 *Tus eventos ({len(events)}):*\n" + "\n".join(lines)
+    except Exception as e:
+        logger.error(f"Error consultando calendario: {e}")
+        return f"❌ Error consultando calendario: {e}"
+
 
 # --- SEGUNDO CEREBRO / RELACIONES (En Sheets) ---
 def save_memory(topic: str, detail: str):
@@ -125,7 +186,7 @@ def save_memory(topic: str, detail: str):
             valueInputOption="USER_ENTERED",
             body=body
         ).execute()
-        return f"Memoria guardada bajo '{topic}'"
+        return f"✅ Memoria guardada bajo '{topic}'"
     except Exception as e:
         return f"Error guardando memoria: {e}"
 
@@ -139,7 +200,7 @@ def search_memory(query: str):
             range="Memoria!A:C"
         ).execute()
         rows = result.get('values', [])
-        # Búsqueda súper simple por texto (se puede mejorar con embeddings)
+        # Búsqueda por texto
         matches = [f"[{r[0]}] {r[1]}: {r[2]}" for r in rows if query.lower() in str(r).lower()]
         if matches:
             return "Encontré esto:\n" + "\n".join(matches)
