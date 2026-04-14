@@ -103,29 +103,43 @@ def list_subscriptions(phone_number: str) -> str:
 
 
 async def send_reminder(phone_number: str, text: str, event_time_iso: str = None):
-    """Tarea que envía el recordatorio por WhatsApp."""
+    """Tarea que envía el recordatorio por WhatsApp con formato premium."""
     tz = pytz.timezone(config.TIMEZONE)
     ahora = datetime.datetime.now(tz)
-    
-    msg = f"🔔 *RECORDATORIO*\n\n"
-    msg += f"📝 {text}\n"
     
     if event_time_iso:
         try:
             event_dt = dateutil.parser.isoparse(event_time_iso)
             if event_dt.tzinfo is None:
                 event_dt = tz.localize(event_dt)
+            
             diff = event_dt - ahora
             mins_left = int(diff.total_seconds() / 60)
+            fecha_str = event_dt.strftime('%d-%m-%Y')
+            hora_str = event_dt.strftime('%H:%M')
+            
+            msg = f"⏰ Tienes un evento próximamente\n\n"
+            msg += f"📅 Fecha: {fecha_str}\n\n"
+            msg += f"🔔 {text} - {hora_str}\n"
+            msg += f"  📝 {text}\n"
+            
             if mins_left > 0:
-                msg += f"⏰ El evento es en {mins_left} minutos ({event_dt.strftime('%H:%M')})\n"
+                msg += f"  ⏳ Comienza en {mins_left} minutos\n"
             else:
-                msg += f"⏰ ¡El evento empieza AHORA! ({event_dt.strftime('%H:%M')})\n"
-            msg += f"📅 {event_dt.strftime('%d/%m/%Y')}"
+                msg += f"  🚨 ¡Comienza AHORA!\n"
+            
+            msg += f"\n¡No olvides prepararte! ¿Necesitas algo más?"
         except Exception:
-            msg += f"📅 {ahora.strftime('%d/%m/%Y %H:%M')}"
+            msg = f"🔔 *RECORDATORIO*\n\n📝 {text}\n📅 {ahora.strftime('%d-%m-%Y %H:%M')}"
     else:
-        msg += f"📅 {ahora.strftime('%d/%m/%Y %H:%M')}"
+        fecha_str = ahora.strftime('%d-%m-%Y')
+        hora_str = ahora.strftime('%H:%M')
+        
+        msg = f"⏰ Tienes un recordatorio\n\n"
+        msg += f"📅 Fecha: {fecha_str}\n\n"
+        msg += f"🔔 {text} - {hora_str}\n"
+        msg += f"  📝 {text}\n"
+        msg += f"\n¿Hay algo más en lo que pueda ayudarte?"
     
     await send_whatsapp_message(phone_number, msg)
 
