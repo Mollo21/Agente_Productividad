@@ -19,6 +19,75 @@ llm = ChatGroq(
     api_key=config.GROQ_API_KEY
 )
 
+# Mapa de emojis por categoría de evento
+EMOJI_MAP = {
+    "reunión": "👥", "reunion": "👥", "meeting": "👥", "equipo": "👥",
+    "doctor": "🏥", "médico": "🏥", "medico": "🏥", "dentista": "🦷", "salud": "🏥",
+    "comida": "🍽️", "almuerzo": "🍽️", "cena": "🍽️", "sushi": "🍣", "pizza": "🍕",
+    "comprar": "🛒", "supermercado": "🛒", "compras": "🛒",
+    "estudio": "📚", "estudiar": "📚", "tarea": "📚", "prueba": "📝", "examen": "📝", "clase": "📚",
+    "trabajo": "💼", "oficina": "💼", "proyecto": "💼",
+    "ejercicio": "🏋️", "gym": "🏋️", "deporte": "⚽", "correr": "🏃",
+    "cumpleaños": "🎂", "fiesta": "🎉", "celebración": "🎉",
+    "viaje": "✈️", "vuelo": "✈️", "pasaje": "✈️",
+    "llamada": "📞", "llamar": "📞",
+    "pago": "💰", "pagar": "💰", "banco": "🏦",
+    "juicio": "⚖️", "abogado": "⚖️", "derecho": "⚖️",
+}
+
+
+def get_emoji_for_event(titulo: str) -> str:
+    """Selecciona el emoji más relevante para el título del evento."""
+    titulo_lower = titulo.lower()
+    for keyword, emoji in EMOJI_MAP.items():
+        if keyword in titulo_lower:
+            return emoji
+    return "📌"
+
+
+def build_event_response(titulo: str, fecha_dt: datetime.datetime, fin_dt: datetime.datetime, 
+                         recordatorio_dt: datetime.datetime = None) -> str:
+    """Construye la respuesta formateada para eventos/recordatorios.
+    Esta función genera el formato EXACTO que Diego quiere, garantizado por código."""
+    
+    emoji = get_emoji_for_event(titulo)
+    fecha_str = fecha_dt.strftime('%d-%m-%Y')
+    hora_inicio = fecha_dt.strftime('%H:%M')
+    hora_fin = fin_dt.strftime('%H:%M')
+    
+    msg = f"¡Listo! He agregado el siguiente evento a tu calendario:\n\n"
+    msg += f"📅 Fecha: {fecha_str}\n\n"
+    msg += f"{emoji} {titulo} - {hora_inicio} a {hora_fin}\n"
+    msg += f"  📝 {titulo}\n"
+    
+    if recordatorio_dt:
+        diff = fecha_dt - recordatorio_dt
+        mins_before = int(diff.total_seconds() / 60)
+        if mins_before <= 0:
+            msg += f"  🔔 Te recordaré cuando empiece (a las {hora_inicio})\n"
+        else:
+            msg += f"  🔔 Te recordaré {mins_before} minutos antes (a las {recordatorio_dt.strftime('%H:%M')})\n"
+    else:
+        msg += f"  🔔 Te recordaré cuando empiece (a las {hora_inicio})\n"
+    
+    # Frase amigable contextual
+    titulo_lower = titulo.lower()
+    if any(w in titulo_lower for w in ["tarea", "estudi", "prueba", "examen"]):
+        msg += "\n¡Mucho éxito con los estudios! 💪 ¿Hay algo más en lo que pueda ayudarte hoy?"
+    elif any(w in titulo_lower for w in ["reunión", "reunion", "equipo", "meeting"]):
+        msg += "\n¡Éxito en la reunión! ¿Hay algo más en lo que pueda ayudarte hoy?"
+    elif any(w in titulo_lower for w in ["doctor", "médico", "dentista", "salud"]):
+        msg += "\n¡Espero que todo salga bien! ¿Hay algo más en lo que pueda ayudarte hoy?"
+    elif any(w in titulo_lower for w in ["cumpleaño", "fiesta", "celebr"]):
+        msg += "\n¡Que sea una gran celebración! 🎉 ¿Hay algo más en lo que pueda ayudarte hoy?"
+    elif any(w in titulo_lower for w in ["compr", "sushi", "comida", "almuerzo", "cena"]):
+        msg += "\n¡Buen provecho! 😋 ¿Hay algo más en lo que pueda ayudarte hoy?"
+    else:
+        msg += "\n¿Hay algo más en lo que pueda ayudarte hoy?"
+    
+    return msg
+
+
 # ==================== HERRAMIENTAS ====================
 
 @tool
@@ -42,20 +111,27 @@ def consultar_gastos(mes_busqueda: str = "") -> str:
     return google_api.get_expenses(mes_busqueda)
 
 @tool
-def programar_evento(titulo: str, inicio_iso: str, fin_iso: str, recordatorio_iso: str = "") -> str:
-    """Crea un evento en Google Calendar Y programa un recordatorio automático.
+def agendar(titulo: str, inicio_iso: str, fin_iso: str, recordatorio_iso: str = "") -> str:
+    """Agenda un evento en el calendario Y programa un recordatorio por WhatsApp.
+    USA ESTA HERRAMIENTA SIEMPRE que el usuario pida agendar, recordar, o programar CUALQUIER COSA con fecha/hora.
     
-    IMPORTANTE - Reglas para las fechas:
-    - TODAS las fechas DEBEN estar en formato ISO 8601 con timezone Chile: YYYY-MM-DDTHH:MM:SS-04:00
-    - Si el usuario dice "mañana a las 9", calcula la fecha exacta de mañana y pon las 09:00:00-04:00
-    - Si no se especifica hora de fin, pon 1 hora después del inicio
-    - recordatorio_iso es CUÁNDO enviar la notificación (NO cuántos minutos antes)
+    Ejemplos de cuándo usarla:
+    - "recuérdame mañana a las 9 hacer tarea" → agendar
+    - "agenda reunión el viernes" → agendar
+    - "mañana 9pm hacer tarea" → agendar
+    - "pon en el calendario la cita del doctor" → agendar
+    
+    REGLAS para las fechas:
+    - TODAS en formato ISO 8601: YYYY-MM-DDTHH:MM:SS-04:00
+    - Si no dice hora de fin, pon 1 hora después del inicio
+    - recordatorio_iso: cuándo enviar el aviso WhatsApp. Si no pide nada especial, pon la MISMA hora que inicio_iso
+    - Si pide "avísame 15 min antes", resta 15 min al inicio y pon esa hora aquí
     
     Args:
-        titulo: Nombre del evento
-        inicio_iso: Fecha/hora de inicio en ISO 8601 (ej: '2026-04-15T09:00:00-04:00')
-        fin_iso: Fecha/hora de fin en ISO 8601 (ej: '2026-04-15T10:00:00-04:00')
-        recordatorio_iso: Fecha/hora de cuándo enviar el recordatorio en ISO 8601. Si el usuario dice 'avísame 15 min antes', calcula la hora del evento menos 15 minutos y escríbela aquí. Si dice 'recuérdame a las 8:50', pon esa hora. Si no pide recordatorio, déjalo vacío.
+        titulo: Nombre del evento (ej: 'Hacer tarea', 'Reunión marketing')
+        inicio_iso: Fecha/hora inicio ISO 8601 (ej: '2026-04-14T21:00:00-04:00')
+        fin_iso: Fecha/hora fin ISO 8601 (ej: '2026-04-14T22:00:00-04:00')
+        recordatorio_iso: Cuándo enviar recordatorio ISO 8601. Vacío = misma hora que inicio
     """
     return "PENDING"
 
@@ -90,13 +166,12 @@ def consultar_memoria(consulta: str) -> str:
 
 @tool
 def buscar_internet(query: str) -> str:
-    """Busca información general y actualizada en internet. Úsala para cualquier consulta.
+    """Busca información general y actualizada en internet.
     IMPORTANTE: NO busques el texto literal del usuario. Genera un query de búsqueda OPTIMIZADO.
     
     Ejemplo:
     - Usuario dice: "cómo va el dólar" → query: "precio dólar Chile hoy cotización"  
     - Usuario dice: "qué pasó con Argentina" → query: "Argentina noticias hoy últimas"
-    - Usuario dice: "cuánto cuesta el cobre" → query: "precio cobre internacional bolsa hoy"
     
     Args:
         query: Query de búsqueda optimizado (NO el texto literal del usuario)
@@ -105,7 +180,7 @@ def buscar_internet(query: str) -> str:
 
 @tool
 def buscar_noticias(query: str) -> str:
-    """Busca NOTICIAS recientes sobre un tema. Usa esta en vez de buscar_internet cuando pregunten por noticias, actualidad o qué está pasando.
+    """Busca NOTICIAS recientes sobre un tema. Usa esta cuando pregunten por noticias o actualidad.
     IMPORTANTE: Genera un query optimizado, NO copies el texto literal del usuario.
     
     Args:
@@ -115,10 +190,10 @@ def buscar_noticias(query: str) -> str:
 
 @tool  
 def crear_suscripcion(tema: str) -> str:
-    """Crea una alerta diaria. Todos los días a las 9 AM el usuario recibirá un resumen completo sobre el tema.
+    """Crea una alerta diaria. Todos los días a las 9 AM recibirá un resumen sobre el tema.
     
     Args:
-        tema: Tema a seguir (ej: 'IPSA', 'Precio del cobre', 'Bitcoin', 'Noticias Chile')
+        tema: Tema a seguir (ej: 'IPSA', 'Precio del cobre', 'Bitcoin')
     """
     return "PENDING_USER_PHONE"
 
@@ -136,32 +211,14 @@ def cancelar_suscripcion(tema: str) -> str:
     """
     return "PENDING_USER_PHONE"
 
-@tool
-def recordar_en_fecha(fecha_hora_iso: str, texto: str) -> str:
-    """Programa un recordatorio para una fecha y hora ESPECÍFICA.
-    
-    REGLAS CRÍTICAS:
-    - Calcula la fecha/hora EXACTA basándote en la hora actual
-    - Si dice "mañana a las 9", calcula la fecha de mañana y pon 09:00:00-04:00
-    - Si dice "en 2 horas", suma 2 horas a la hora actual
-    - Si dice "el viernes a las 15:00", busca el próximo viernes
-    - SIEMPRE incluye la timezone -04:00 (Chile)
-    
-    Args:
-        fecha_hora_iso: Cuándo enviar el recordatorio en ISO 8601 (ej: '2026-04-15T09:00:00-04:00')
-        texto: Qué recordarle al usuario
-    """
-    return "PENDING_USER_PHONE"
-
 
 # Bind tools
 tools = [
     registrar_gasto, consultar_gastos,
-    programar_evento, consultar_calendario,
+    agendar, consultar_calendario,
     guardar_memoria, consultar_memoria,
     buscar_internet, buscar_noticias,
     crear_suscripcion, listar_suscripciones, cancelar_suscripcion,
-    recordar_en_fecha
 ]
 llm_with_tools = llm.bind_tools(tools)
 
@@ -172,106 +229,56 @@ system_prompt = """Eres el Asistente Personal de Diego. Eres su segundo cerebro 
 Sé conciso, amigable, directo y usa emojis donde aporten valor.
 
 ═══════════════════════════════════════════════
-🔴 REGLAS ABSOLUTAS - EJECUTAR SIN PREGUNTAR 🔴
+🔴 REGLAS ABSOLUTAS 🔴
 ═══════════════════════════════════════════════
 
-1. CUANDO EL USUARIO PIDA ALGO, HAZLO DE INMEDIATO. No preguntes confirmación si tienes la info mínima.
-2. Si dice "recuérdame mañana a las 9" → USA recordar_en_fecha con la fecha EXACTA de mañana a las 09:00:00-04:00
-3. Si dice "agenda una reunión el viernes a las 3" → USA programar_evento con la fecha del próximo viernes a las 15:00:00-04:00
+1. CUANDO EL USUARIO PIDA ALGO, HAZLO DE INMEDIATO. No preguntes confirmación.
+2. CUALQUIER pedido con fecha/hora (recordar, agendar, programar) → USA la herramienta "agendar" SIEMPRE.
+3. "recuérdame mañana a las 9" → agendar. "agenda reunión viernes" → agendar. "mañana 9pm hacer tarea" → agendar.
 4. NUNCA respondas "¿quieres que lo agende?" si ya tienes la información. HAZLO.
 
 ═══════════════════════════════════════════════
-📅 REGLAS DE CALENDARIO Y RECORDATORIOS
+📅 REGLAS DE FECHAS
 ═══════════════════════════════════════════════
 
-CÁLCULO DE FECHAS - ESTO ES CRÍTICO:
+CÁLCULO DE FECHAS - CRÍTICO:
 - "mañana" = fecha de hoy + 1 día
 - "pasado mañana" = fecha de hoy + 2 días
-- "el lunes" = el próximo lunes (si hoy es lunes, el de la próxima semana)
+- "el lunes" = el próximo lunes
 - "en una hora" = hora actual + 1 hora
 - "en 30 minutos" = hora actual + 30 minutos
 
-FORMATO OBLIGATORIO para fechas: YYYY-MM-DDTHH:MM:SS-04:00 (timezone Chile)
+FORMATO: YYYY-MM-DDTHH:MM:SS-04:00
 
-RECORDATORIOS vs EVENTOS:
-- "Recuérdame X" → usa recordar_en_fecha (es un aviso por WhatsApp)
-- "Agenda X" / "Pon en el calendario X" → usa programar_evento (crea evento en Google Calendar + recordatorio)
-
-FORMATO DE RESPUESTA OBLIGATORIO para eventos y recordatorios:
-
-Ejemplo para un evento de sushi a las 11:45 del 13-04-2026:
-
-"¡Listo! He agregado el siguiente evento a tu calendario:
-
-📅 Fecha: 13-04-2026
-
-🍣 Comprar sushi - 11:45
-  📝 Comprar sushi hoy
-  🔔 Te recordaré cuando empiece (a las 11:45)
-
-¡Espero que encuentres un buen sushi! ¿Hay algo más en lo que pueda ayudarte hoy?"
-
-Ejemplo para una reunión con el equipo a las 15:00 del 14-04-2026 con aviso 10 min antes:
-
-"¡Listo! He agregado el siguiente evento a tu calendario:
-
-📅 Fecha: 14-04-2026
-
-👥 Reunión con equipo de marketing - 15:00 a 16:00
-  📝 Reunión con el equipo de marketing
-  🔔 Te recordaré 10 minutos antes (a las 14:50)
-
-¡Éxito en la reunión! ¿Hay algo más en lo que pueda ayudarte hoy?"
-
-REGLAS del formato:
-- Siempre empieza con "¡Listo! He agregado el siguiente evento a tu calendario:"
-- Usa un emoji representativo del evento (🍣 comida, 👥 reunión, 🏥 médico, 📚 estudio, 🎂 cumpleaños, etc.)
-- Muestra título, hora y descripción
-- Siempre muestra info del recordatorio con 🔔
-- Termina con una frase amigable relacionada al evento y pregunta si necesita algo más
+IMPORTANTE: Cuando la herramienta agendar retorne un resultado, DEVUELVE ESE RESULTADO TAL CUAL al usuario, SIN modificarlo. El mensaje ya viene formateado perfectamente.
 
 ═══════════════════════════════════════════════
-🔍 REGLAS DE BÚSQUEDA EN INTERNET
+🔍 REGLAS DE BÚSQUEDA
 ═══════════════════════════════════════════════
 
-NUNCA busques el texto LITERAL del usuario. SIEMPRE optimiza el query:
-
-❌ INCORRECTO: buscar_internet("cómo va el dólar")
-✅ CORRECTO: buscar_internet("cotización dólar peso chileno hoy")
-
-❌ INCORRECTO: buscar_noticias("qué pasa en Chile")  
-✅ CORRECTO: buscar_noticias("Chile noticias principales hoy")
-
-❌ INCORRECTO: buscar_internet("cuánto cuesta un PS5")
-✅ CORRECTO: buscar_internet("precio PlayStation 5 Chile 2026 tiendas")
-
-Para preguntas de ACTUALIDAD/NOTICIAS → usa buscar_noticias
-Para preguntas de INFORMACIÓN GENERAL → usa buscar_internet
+NUNCA busques el texto LITERAL del usuario. SIEMPRE optimiza el query.
+Para NOTICIAS → usa buscar_noticias
+Para INFO GENERAL → usa buscar_internet
 
 Cuando presentes resultados de búsqueda:
 - Resume los puntos más relevantes
 - Incluye datos numéricos si los hay
-- Menciona fuentes cuando sea útil
 - NO copies los resultados tal cual, sintetiza
 
 ═══════════════════════════════════════════════
-💰 REGLAS DE FINANZAS  
+💰 FINANZAS
 ═══════════════════════════════════════════════
-- Moneda: CLP (pesos chilenos) por defecto
-- Si dice "gasté 15 lucas en el super", registra monto=15000, categoria=Supermercado
+- Moneda: CLP (pesos chilenos)
+- "15 lucas" = 15000
 
 ═══════════════════════════════════════════════
 📍 CONTEXTO
 ═══════════════════════════════════════════════
-- País: Chile
-- Timezone: America/Santiago (-04:00)
-- Idioma: Español chileno
+- País: Chile, Timezone: America/Santiago (-04:00)
 """
 
 # ==================== HISTORIAL ====================
 
-# Diccionario simple en memoria para el historial de conversaciones por usuario
-# En producción, usar Redis o SQL
 chat_history = {}
 
 
@@ -280,18 +287,15 @@ chat_history = {}
 async def agent_process(text: str, phone_number: str) -> str:
     """Procesa un mensaje del usuario y retorna la respuesta del agente."""
     
-    # Obtener o inicializar historial del usuario
     if phone_number not in chat_history:
         chat_history[phone_number] = []
     
-    # Limitar historial a los últimos 10 mensajes para no exceder tokens
     history = chat_history[phone_number][-10:]
     
-    # Obtener hora actual en Chile con información completa
+    # Contexto temporal
     tz = pytz.timezone(config.TIMEZONE)
     ahora = datetime.datetime.now(tz)
     
-    # Mapeo de días en español
     dias_semana = {
         'Monday': 'lunes', 'Tuesday': 'martes', 'Wednesday': 'miércoles',
         'Thursday': 'jueves', 'Friday': 'viernes', 'Saturday': 'sábado', 'Sunday': 'domingo'
@@ -306,11 +310,13 @@ async def agent_process(text: str, phone_number: str) -> str:
     dia_semana = dias_semana.get(ahora.strftime('%A'), ahora.strftime('%A'))
     mes = meses.get(ahora.strftime('%B'), ahora.strftime('%B'))
     
+    manana = ahora + datetime.timedelta(days=1)
+    
     fecha_context = (
         f"Fecha actual: {dia_semana}, {ahora.day} de {mes} de {ahora.year}\n"
         f"Hora actual: {ahora.strftime('%H:%M:%S')}\n"
         f"Timezone: America/Santiago (UTC-04:00)\n"
-        f"El 'mañana' sería: {(ahora + datetime.timedelta(days=1)).strftime('%Y-%m-%d')}\n"
+        f"Mañana es: {manana.strftime('%Y-%m-%d')} ({dias_semana.get(manana.strftime('%A'), manana.strftime('%A'))})\n"
         f"ISO actual: {ahora.isoformat()}"
     )
 
@@ -324,17 +330,14 @@ async def agent_process(text: str, phone_number: str) -> str:
     try:
         response = llm_with_tools.invoke(messages)
         
-        # Guardar mensaje del usuario en el historial
         chat_history[phone_number].append(user_msg)
         
-        # Si el LLM decide usar herramientas
-        max_iterations = 5  # Evitar loops infinitos
+        max_iterations = 5
         iteration = 0
         
         while response.tool_calls and iteration < max_iterations:
             iteration += 1
             
-            # Guardar la respuesta del asistente (con tool_calls) en el historial
             chat_history[phone_number].append(response)
             messages.append(response)
             
@@ -346,14 +349,12 @@ async def agent_process(text: str, phone_number: str) -> str:
                 
                 logger.info(f"Ejecutando herramienta: {tool_name} con args: {tool_args}")
                 
-                # Ejecutar herramienta
                 result_str = execute_tool(tool_name, tool_args, phone_number)
                 
                 logger.info(f"Resultado de {tool_name}: {result_str[:200]}...")
                 
-                tool_results_summary.append(f"{tool_name}: {result_str}")
+                tool_results_summary.append(result_str)
                 
-                # Crear mensaje de resultado
                 tool_msg = ToolMessage(
                     content=result_str,
                     tool_call_id=tool_call["id"]
@@ -361,20 +362,21 @@ async def agent_process(text: str, phone_number: str) -> str:
                 messages.append(tool_msg)
                 chat_history[phone_number].append(tool_msg)
             
-            # Invocar al LLM de nuevo con los resultados
+            # Para herramientas que generan respuesta formateada (agendar),
+            # devolver el resultado directamente sin re-invocar al LLM
+            if any(tc["name"] == "agendar" for tc in response.tool_calls):
+                formatted_response = "\n".join(tool_results_summary)
+                response = AIMessage(content=formatted_response)
+                break
+            
             try:
                 response = llm_with_tools.invoke(messages)
             except Exception as e:
-                # Groq a veces falla al generar la respuesta final después de tool calls
-                # En ese caso, construimos una respuesta manual con los resultados
                 logger.warning(f"Error en segunda invocación del LLM (recuperando): {e}")
                 combined = "\n".join(tool_results_summary)
                 response = AIMessage(content=combined)
         
-        # Guardar respuesta final
         chat_history[phone_number].append(response)
-        
-        # Mantener historial corto
         chat_history[phone_number] = chat_history[phone_number][-20:]
         
         return response.content
@@ -392,27 +394,49 @@ def execute_tool(name: str, args: dict, phone_number: str) -> str:
         try: return float(str(v).replace('"', '').replace('$', '').replace(',', '').replace('.', '').strip())
         except: return 0.0
 
-    def execute_calendar_event(a):
-        """Crea evento en calendario y programa recordatorio si se especifica."""
-        # 1. Crear evento en Google Calendar
-        result = google_api.add_calendar_event(a['titulo'], a['inicio_iso'], a['fin_iso'])
+    def execute_agendar(a):
+        """Crea evento en calendario + recordatorio + devuelve respuesta formateada."""
+        tz = pytz.timezone(config.TIMEZONE)
         
-        # 2. Programar recordatorio si se especificó
-        recordatorio_iso = a.get('recordatorio_iso', '')
-        if recordatorio_iso and recordatorio_iso.strip():
+        # Parsear fechas
+        try:
+            inicio_dt = dateutil.parser.isoparse(a['inicio_iso'])
+            if inicio_dt.tzinfo is None:
+                inicio_dt = tz.localize(inicio_dt)
+                
+            fin_dt = dateutil.parser.isoparse(a['fin_iso'])
+            if fin_dt.tzinfo is None:
+                fin_dt = tz.localize(fin_dt)
+        except Exception as e:
+            return f"❌ Error con las fechas: {e}"
+        
+        # Recordatorio: si no se especifica, usar misma hora que inicio
+        recordatorio_iso = a.get('recordatorio_iso', '').strip()
+        if recordatorio_iso:
             try:
-                reminder_result = scheduler.add_reminder_at_datetime(
-                    recordatorio_iso, 
-                    a['titulo'], 
-                    phone_number,
-                    event_time_iso=a['inicio_iso']
-                )
-                result += f"\n{reminder_result}"
-            except Exception as e:
-                logger.error(f"Error programando recordatorio del evento: {e}")
-                result += f"\n⚠️ El evento se creó pero hubo un error con el recordatorio: {e}"
+                recordatorio_dt = dateutil.parser.isoparse(recordatorio_iso)
+                if recordatorio_dt.tzinfo is None:
+                    recordatorio_dt = tz.localize(recordatorio_dt)
+            except:
+                recordatorio_dt = inicio_dt
+        else:
+            recordatorio_dt = inicio_dt
         
-        return result
+        # 1. Crear evento en Google Calendar
+        cal_result = google_api.add_calendar_event(a['titulo'], a['inicio_iso'], a['fin_iso'])
+        logger.info(f"Calendar result: {cal_result}")
+        
+        # 2. Programar recordatorio por WhatsApp
+        reminder_result = scheduler.add_reminder_at_datetime(
+            recordatorio_dt.isoformat(),
+            a['titulo'],
+            phone_number,
+            event_time_iso=a['inicio_iso']
+        )
+        logger.info(f"Reminder result: {reminder_result}")
+        
+        # 3. Construir respuesta formateada (GARANTIZADA por código Python)
+        return build_event_response(a['titulo'], inicio_dt, fin_dt, recordatorio_dt)
 
     def execute_query_calendar(a):
         """Consulta eventos del calendario."""
@@ -434,7 +458,7 @@ def execute_tool(name: str, args: dict, phone_number: str) -> str:
             safe_float(a['monto']), a['categoria'], a['descripcion']
         ),
         "consultar_gastos": lambda a: google_api.get_expenses(a.get('mes_busqueda', '')),
-        "programar_evento": lambda a: execute_calendar_event(a),
+        "agendar": lambda a: execute_agendar(a),
         "consultar_calendario": lambda a: execute_query_calendar(a),
         "guardar_memoria": lambda a: google_api.save_memory(a['categoria'], a['detalle']),
         "consultar_memoria": lambda a: google_api.search_memory(a['consulta']),
@@ -443,9 +467,6 @@ def execute_tool(name: str, args: dict, phone_number: str) -> str:
         "crear_suscripcion": lambda a: scheduler.add_subscription(a['tema'], "0 9 * * *", phone_number),
         "listar_suscripciones": lambda a: scheduler.list_subscriptions(phone_number),
         "cancelar_suscripcion": lambda a: scheduler.remove_subscription(a['tema'], phone_number),
-        "recordar_en_fecha": lambda a: scheduler.add_reminder_at_datetime(
-            a['fecha_hora_iso'], a['texto'], phone_number
-        ),
     }
     
     if name in tool_map:
