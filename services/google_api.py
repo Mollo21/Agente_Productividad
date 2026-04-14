@@ -21,15 +21,15 @@ CALENDAR_ID = 'diegomollo65@gmail.com'
 def get_google_services():
     """
     Inicializa servicios de Google.
-    1. Archivo credentials.json (local)
-    2. Variable env GOOGLE_CREDENTIALS_JSON (Render)
     """
     creds = None
     google_creds_json = os.getenv("GOOGLE_CREDENTIALS_JSON")
+    
     if google_creds_json:
         try:
             creds_dict = json.loads(google_creds_json)
             creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+            logger.info("Credenciales cargadas desde ENV_VAR.")
         except Exception as e:
             logger.error(f"Error parseando GOOGLE_CREDENTIALS_JSON: {e}")
     
@@ -38,9 +38,22 @@ def get_google_services():
         if os.path.exists(creds_path):
             try:
                 creds = Credentials.from_service_account_file(creds_path, scopes=SCOPES)
+                logger.info("Credenciales cargadas desde archivo local.")
             except Exception as e:
                 logger.error(f"Error leyendo archivo de credenciales: {e}")
     
+    if not creds:
+        logger.error("NO se pudieron cargar credenciales de Google.")
+        return None, None
+    
+    try:
+        sheets_service = build('sheets', 'v4', credentials=creds)
+        calendar_service = build('calendar', 'v3', credentials=creds)
+        return sheets_service, calendar_service
+    except Exception as e:
+        logger.error(f"Error construyendo servicios: {e}")
+        return None, None
+
 def ensure_sheet_exists(sheet_name: str, headers: list):
     """Verifica si una pestaña existe, si no, la crea con cabeceras."""
     if not sheets_service: return
@@ -63,6 +76,7 @@ def ensure_sheet_exists(sheet_name: str, headers: list):
     except Exception as e:
         logger.error(f"Error asegurando pestaña {sheet_name}: {e}")
 
+# Inicialización GLOBAL de servicios
 sheets_service, calendar_service = get_google_services()
 
 # --- FINANZAS ---
@@ -90,8 +104,12 @@ def get_expenses(mes_str: str = ""):
         rows = result.get('values', [])
         if not rows: return "No hay gastos."
         matches = rows[-20:]
-        total = sum(float(str(r[1]).replace(',','')) for r in matches if len(r)>1)
-        return f"📊 *Resumen Gastos*\nTotal: ${total:,.0f}"
+        total = 0
+        for r in matches:
+            if len(r)>1:
+                try: total += float(str(r[1]).replace(',','').replace('$',''))
+                except: pass
+        return f"📊 *Resumen Gastos*\nTotal últimos 20: ${total:,.0f}"
     except: return "Error leyendo gastos."
 
 # --- CALENDARIO ---
@@ -117,11 +135,13 @@ def add_calendar_event(summary: str, start_iso: str, end_iso: str, all_day: bool
 
 def get_calendar_events(time_min: str, time_max: str):
     if not calendar_service: return "❌ No Calendar"
-    events = calendar_service.events().list(
-        calendarId=CALENDAR_ID, timeMin=time_min, timeMax=time_max, singleEvents=True, orderBy='startTime'
-    ).execute().get('items', [])
-    if not events: return "No hay eventos."
-    return "📋 *Eventos:*\n" + "\n".join([f"• {e.get('summary')}" for e in events])
+    try:
+        events = calendar_service.events().list(
+            calendarId=CALENDAR_ID, timeMin=time_min, timeMax=time_max, singleEvents=True, orderBy='startTime'
+        ).execute().get('items', [])
+        if not events: return "No hay eventos."
+        return "📋 *Eventos:*\n" + "\n".join([f"• {e.get('summary')}" for e in events])
+    except: return "Error calendario."
 
 # --- MEMORIA ---
 def save_memory(topic: str, detail: str):
@@ -138,11 +158,13 @@ def save_memory(topic: str, detail: str):
 
 def search_memory(query: str):
     if not sheets_service: return "❌ No Sheets"
-    rows = sheets_service.spreadsheets().values().get(
-        spreadsheetId=config.GOOGLE_SHEETS_ID, range="Memoria!A:C"
-    ).execute().get('values', [])
-    matches = [f"{r[1]}: {r[2]}" for r in rows if query.lower() in str(r).lower()]
-    return "\n".join(matches) if matches else "No encontré nada."
+    try:
+        rows = sheets_service.spreadsheets().values().get(
+            spreadsheetId=config.GOOGLE_SHEETS_ID, range="Memoria!A:C"
+        ).execute().get('values', [])
+        matches = [f"{r[1]}: {r[2]}" for r in rows if len(r)>2 and query.lower() in str(r).lower()]
+        return "\n".join(matches) if matches else "No encontré nada."
+    except: return "Error memoria."
 
 # --- SUSCRIPCIONES (Persistencia) ---
 def save_subscription(topic: str, hour: int, minute: int, phone_number: str):
