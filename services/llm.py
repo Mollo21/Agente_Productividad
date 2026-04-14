@@ -45,30 +45,43 @@ def get_emoji_for_event(titulo: str) -> str:
     return "📌"
 
 
-def build_event_response(titulo: str, fecha_dt: datetime.datetime, fin_dt: datetime.datetime, 
-                         recordatorio_dt: datetime.datetime = None) -> str:
+def build_event_response(titulo: str, fecha_dt: datetime.datetime, fin_dt: datetime.datetime = None, 
+                         recordatorio_dt: datetime.datetime = None, all_day: bool = False,
+                         calendar_ok: bool = True) -> str:
     """Construye la respuesta formateada para eventos/recordatorios.
     Esta función genera el formato EXACTO que Diego quiere, garantizado por código."""
     
     emoji = get_emoji_for_event(titulo)
     fecha_str = fecha_dt.strftime('%d-%m-%Y')
-    hora_inicio = fecha_dt.strftime('%H:%M')
-    hora_fin = fin_dt.strftime('%H:%M')
     
     msg = f"¡Listo! He agregado el siguiente evento a tu calendario:\n\n"
     msg += f"📅 Fecha: {fecha_str}\n\n"
-    msg += f"{emoji} {titulo} - {hora_inicio} a {hora_fin}\n"
-    msg += f"  📝 {titulo}\n"
     
-    if recordatorio_dt:
-        diff = fecha_dt - recordatorio_dt
-        mins_before = int(diff.total_seconds() / 60)
-        if mins_before <= 0:
-            msg += f"  🔔 Te recordaré cuando empiece (a las {hora_inicio})\n"
+    if all_day:
+        msg += f"{emoji} {titulo} - Todo el día\n"
+        msg += f"  📝 {titulo}\n"
+        if recordatorio_dt:
+            msg += f"  🔔 Te recordaré el mismo día a las {recordatorio_dt.strftime('%H:%M')}\n"
         else:
-            msg += f"  🔔 Te recordaré {mins_before} minutos antes (a las {recordatorio_dt.strftime('%H:%M')})\n"
+            msg += f"  🔔 Te recordaré a las 09:00\n"
     else:
-        msg += f"  🔔 Te recordaré cuando empiece (a las {hora_inicio})\n"
+        hora_inicio = fecha_dt.strftime('%H:%M')
+        hora_fin = fin_dt.strftime('%H:%M') if fin_dt else (fecha_dt + datetime.timedelta(hours=1)).strftime('%H:%M')
+        msg += f"{emoji} {titulo} - {hora_inicio} a {hora_fin}\n"
+        msg += f"  📝 {titulo}\n"
+        
+        if recordatorio_dt:
+            diff = fecha_dt - recordatorio_dt
+            mins_before = int(diff.total_seconds() / 60)
+            if mins_before <= 0:
+                msg += f"  🔔 Te recordaré cuando empiece (a las {hora_inicio})\n"
+            else:
+                msg += f"  🔔 Te recordaré {mins_before} minutos antes (a las {recordatorio_dt.strftime('%H:%M')})\n"
+        else:
+            msg += f"  🔔 Te recordaré cuando empiece (a las {hora_inicio})\n"
+    
+    if not calendar_ok:
+        msg += "\n⚠️ Nota: Hubo un problema guardando en Google Calendar, pero el recordatorio por WhatsApp sí quedó programado.\n"
     
     # Frase amigable contextual
     titulo_lower = titulo.lower()
@@ -111,27 +124,29 @@ def consultar_gastos(mes_busqueda: str = "") -> str:
     return google_api.get_expenses(mes_busqueda)
 
 @tool
-def agendar(titulo: str, inicio_iso: str, fin_iso: str, recordatorio_iso: str = "") -> str:
+def agendar(titulo: str, inicio_iso: str, fin_iso: str = "", recordatorio_iso: str = "", todo_el_dia: bool = False) -> str:
     """Agenda un evento en el calendario Y programa un recordatorio por WhatsApp.
-    USA ESTA HERRAMIENTA SIEMPRE que el usuario pida agendar, recordar, o programar CUALQUIER COSA con fecha/hora.
+    USA ESTA HERRAMIENTA SIEMPRE que el usuario pida agendar, recordar, o programar CUALQUIER COSA con fecha.
     
     Ejemplos de cuándo usarla:
-    - "recuérdame mañana a las 9 hacer tarea" → agendar
-    - "agenda reunión el viernes" → agendar
-    - "mañana 9pm hacer tarea" → agendar
-    - "pon en el calendario la cita del doctor" → agendar
+    - "recuérdame mañana a las 9 hacer tarea" → agendar con hora
+    - "agenda reunión el viernes" → agendar con hora estimada (por defecto 09:00)
+    - "mañana 9pm hacer tarea" → agendar con hora
+    - "recuérdame el día 15 cumpleaños de Tomy" → agendar con todo_el_dia=true
+    - "el 20 es el cumpleaños de mamá" → agendar con todo_el_dia=true
     
-    REGLAS para las fechas:
-    - TODAS en formato ISO 8601: YYYY-MM-DDTHH:MM:SS-04:00
-    - Si no dice hora de fin, pon 1 hora después del inicio
-    - recordatorio_iso: cuándo enviar el aviso WhatsApp. Si no pide nada especial, pon la MISMA hora que inicio_iso
-    - Si pide "avísame 15 min antes", resta 15 min al inicio y pon esa hora aquí
+    REGLAS:
+    - Si el usuario menciona una hora específica: usa inicio_iso con esa hora y todo_el_dia=false
+    - Si el usuario NO menciona hora (solo día/fecha): pon todo_el_dia=true y usa la fecha a las 09:00 en inicio_iso
+    - Si no dice hora de fin, pon 1 hora después del inicio o déjalo vacío
+    - recordatorio_iso: cuándo enviar el aviso WhatsApp. Vacío = misma hora que inicio (o 09:00 si es todo el día)
     
     Args:
-        titulo: Nombre del evento (ej: 'Hacer tarea', 'Reunión marketing')
-        inicio_iso: Fecha/hora inicio ISO 8601 (ej: '2026-04-14T21:00:00-04:00')
-        fin_iso: Fecha/hora fin ISO 8601 (ej: '2026-04-14T22:00:00-04:00')
-        recordatorio_iso: Cuándo enviar recordatorio ISO 8601. Vacío = misma hora que inicio
+        titulo: Nombre del evento (ej: 'Hacer tarea', 'Cumpleaños de Tomy')
+        inicio_iso: Fecha/hora en ISO 8601 (ej: '2026-04-15T09:00:00-04:00')
+        fin_iso: Fecha/hora fin. Vacío = 1 hora después del inicio
+        recordatorio_iso: Cuándo enviar recordatorio. Vacío = misma hora que inicio
+        todo_el_dia: true si el usuario solo dio una fecha sin hora específica (cumpleaños, fechas, etc.)
     """
     return "PENDING"
 
@@ -233,9 +248,14 @@ Sé conciso, amigable, directo y usa emojis donde aporten valor.
 ═══════════════════════════════════════════════
 
 1. CUANDO EL USUARIO PIDA ALGO, HAZLO DE INMEDIATO. No preguntes confirmación.
-2. CUALQUIER pedido con fecha/hora (recordar, agendar, programar) → USA la herramienta "agendar" SIEMPRE.
-3. "recuérdame mañana a las 9" → agendar. "agenda reunión viernes" → agendar. "mañana 9pm hacer tarea" → agendar.
-4. NUNCA respondas "¿quieres que lo agende?" si ya tienes la información. HAZLO.
+2. CUALQUIER pedido que mencione una fecha, día, hora o que use palabras como "recuérdame", "agenda", "pon", "anota" → USA la herramienta "agendar" SIEMPRE.
+3. Ejemplos:
+   - "recuérdame mañana a las 9" → agendar (con hora)
+   - "mañana 9pm hacer tarea" → agendar (con hora)
+   - "recuérdame el día 15 cumpleaños de Tomy" → agendar (todo_el_dia=true)
+   - "el 20 es la prueba de derecho" → agendar (todo_el_dia=true)
+4. NUNCA respondas "no puedo recordar" o "¿quieres que lo agende?". Si tiene fecha/día, USA agendar DIRECTAMENTE.
+5. Si solo dice un día sin hora → pon todo_el_dia=true. Si dice hora → pon todo_el_dia=false.
 
 ═══════════════════════════════════════════════
 📅 REGLAS DE FECHAS
@@ -397,18 +417,27 @@ def execute_tool(name: str, args: dict, phone_number: str) -> str:
     def execute_agendar(a):
         """Crea evento en calendario + recordatorio + devuelve respuesta formateada."""
         tz = pytz.timezone(config.TIMEZONE)
+        is_all_day = a.get('todo_el_dia', False)
         
-        # Parsear fechas
+        # Parsear fecha de inicio
         try:
             inicio_dt = dateutil.parser.isoparse(a['inicio_iso'])
             if inicio_dt.tzinfo is None:
                 inicio_dt = tz.localize(inicio_dt)
-                
-            fin_dt = dateutil.parser.isoparse(a['fin_iso'])
-            if fin_dt.tzinfo is None:
-                fin_dt = tz.localize(fin_dt)
         except Exception as e:
-            return f"❌ Error con las fechas: {e}"
+            return f"❌ Error con la fecha de inicio: {e}"
+        
+        # Parsear fecha de fin (opcional)
+        fin_iso = a.get('fin_iso', '').strip()
+        if fin_iso:
+            try:
+                fin_dt = dateutil.parser.isoparse(fin_iso)
+                if fin_dt.tzinfo is None:
+                    fin_dt = tz.localize(fin_dt)
+            except:
+                fin_dt = inicio_dt + datetime.timedelta(hours=1)
+        else:
+            fin_dt = inicio_dt + datetime.timedelta(hours=1)
         
         # Recordatorio: si no se especifica, usar misma hora que inicio
         recordatorio_iso = a.get('recordatorio_iso', '').strip()
@@ -423,8 +452,12 @@ def execute_tool(name: str, args: dict, phone_number: str) -> str:
             recordatorio_dt = inicio_dt
         
         # 1. Crear evento en Google Calendar
-        cal_result = google_api.add_calendar_event(a['titulo'], a['inicio_iso'], a['fin_iso'])
+        cal_result = google_api.add_calendar_event(
+            a['titulo'], a['inicio_iso'], fin_dt.isoformat(), 
+            all_day=is_all_day
+        )
         logger.info(f"Calendar result: {cal_result}")
+        calendar_ok = "CALENDAR_OK" in cal_result
         
         # 2. Programar recordatorio por WhatsApp
         reminder_result = scheduler.add_reminder_at_datetime(
@@ -436,7 +469,10 @@ def execute_tool(name: str, args: dict, phone_number: str) -> str:
         logger.info(f"Reminder result: {reminder_result}")
         
         # 3. Construir respuesta formateada (GARANTIZADA por código Python)
-        return build_event_response(a['titulo'], inicio_dt, fin_dt, recordatorio_dt)
+        return build_event_response(
+            a['titulo'], inicio_dt, fin_dt, recordatorio_dt, 
+            all_day=is_all_day, calendar_ok=calendar_ok
+        )
 
     def execute_query_calendar(a):
         """Consulta eventos del calendario."""
