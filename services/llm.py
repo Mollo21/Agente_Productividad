@@ -48,8 +48,7 @@ def get_emoji_for_event(titulo: str) -> str:
 def build_event_response(titulo: str, fecha_dt: datetime.datetime, fin_dt: datetime.datetime = None, 
                          recordatorio_dt: datetime.datetime = None, all_day: bool = False,
                          calendar_ok: bool = True) -> str:
-    """Construye la respuesta formateada para eventos/recordatorios.
-    Esta función genera el formato EXACTO que Diego quiere, garantizado por código."""
+    """Construye la respuesta formateada para eventos/recordatorios."""
     
     emoji = get_emoji_for_event(titulo)
     fecha_str = fecha_dt.strftime('%d-%m-%Y')
@@ -100,131 +99,75 @@ def build_event_response(titulo: str, fecha_dt: datetime.datetime, fin_dt: datet
     
     return msg
 
+def safe_float(v):
+    try: return float(str(v).replace('"', '').replace('$', '').replace(',', '').replace('.', '').strip())
+    except: return 0.0
 
 # ==================== HERRAMIENTAS ====================
 
 @tool
 def registrar_gasto(monto: str, categoria: str, descripcion: str) -> str:
-    """Registra un gasto económico del usuario.
-    
-    Args:
-        monto: Monto en pesos chilenos (número, ej: '15000')
-        categoria: Categoría del gasto (ej: 'Supermercado', 'Transporte', 'Comida')
-        descripcion: Breve descripción del gasto
-    """
-    return "PENDING"
+    """Registra un gasto económico del usuario en la planilla de finanzas."""
+    return google_api.log_expense(safe_float(monto), categoria, descripcion)
 
 @tool
 def consultar_gastos(mes_busqueda: str = "") -> str:
-    """Consulta los gastos registrados del usuario. Puede filtrar por mes.
-    
-    Args:
-        mes_busqueda: Opcional. Mes a buscar (ej: 'abril', '2024-04'). Vacío = últimos 20.
-    """
+    """Consulta los gastos registrados del usuario."""
     return google_api.get_expenses(mes_busqueda)
 
 @tool
 def agendar(titulo: str, inicio_iso: str, fin_iso: str = "", recordatorio_iso: str = "", todo_el_dia: bool = False) -> str:
     """Agenda un evento en el calendario Y programa un recordatorio por WhatsApp.
     USA ESTA HERRAMIENTA SIEMPRE que el usuario pida agendar, recordar, o programar CUALQUIER COSA con fecha.
-    
-    Ejemplos de cuándo usarla:
-    - "recuérdame mañana a las 9 hacer tarea" → agendar con hora
-    - "agenda reunión el viernes" → agendar con hora estimada (por defecto 09:00)
-    - "mañana 9pm hacer tarea" → agendar con hora
-    - "recuérdame el día 15 cumpleaños de Tomy" → agendar con todo_el_dia=true
-    - "el 20 es el cumpleaños de mamá" → agendar con todo_el_dia=true
-    
-    REGLAS:
-    - Si el usuario menciona una hora específica: usa inicio_iso con esa hora y todo_el_dia=false
-    - Si el usuario NO menciona hora (solo día/fecha): pon todo_el_dia=true y usa la fecha a las 09:00 en inicio_iso
-    - Si no dice hora de fin, pon 1 hora después del inicio o déjalo vacío
-    - recordatorio_iso: cuándo enviar el aviso WhatsApp. Vacío = misma hora que inicio (o 09:00 si es todo el día)
-    
-    Args:
-        titulo: Nombre del evento (ej: 'Hacer tarea', 'Cumpleaños de Tomy')
-        inicio_iso: Fecha/hora en ISO 8601 (ej: '2026-04-15T09:00:00-04:00')
-        fin_iso: Fecha/hora fin. Vacío = 1 hora después del inicio
-        recordatorio_iso: Cuándo enviar recordatorio. Vacío = misma hora que inicio
-        todo_el_dia: true si el usuario solo dio una fecha sin hora específica (cumpleaños, fechas, etc.)
     """
-    return "PENDING"
+    return "EVENT_SCHEDULED_CHECK_BACKGROUND"
 
 @tool
 def consultar_calendario(fecha_inicio: str = "", fecha_fin: str = "") -> str:
     """Consulta los eventos del calendario del usuario.
-    
-    Args:
-        fecha_inicio: Fecha desde cuándo buscar en ISO 8601 (ej: '2026-04-14T00:00:00-04:00'). Si vacío, busca desde hoy.
-        fecha_fin: Fecha hasta cuándo buscar en ISO 8601 (ej: '2026-04-20T23:59:59-04:00'). Si vacío, busca los próximos 7 días.
     """
-    return "PENDING"
+    return "CALENDAR_QUERY_PENDING"
 
 @tool
 def guardar_memoria(categoria: str, detalle: str) -> str:
     """Guarda un dato personal para recordar a futuro.
-    
-    Args:
-        categoria: Tema o persona (ej: 'Llaves', 'Mamá', 'WiFi casa')
-        detalle: Información a recordar (ej: 'Las dejé en el cajón azul', 'Cumple el 15 de marzo')
     """
     return google_api.save_memory(categoria, detalle)
 
 @tool
 def consultar_memoria(consulta: str) -> str:
     """Busca en la memoria datos guardados previamente.
-    
-    Args:
-        consulta: Qué buscar (ej: 'llaves', 'cumpleaños mamá')
     """
     return google_api.search_memory(consulta)
 
 @tool
 def buscar_internet(query: str) -> str:
     """Busca información general y actualizada en internet.
-    IMPORTANTE: NO busques el texto literal del usuario. Genera un query de búsqueda OPTIMIZADO.
-    
-    Ejemplo:
-    - Usuario dice: "cómo va el dólar" → query: "precio dólar Chile hoy cotización"  
-    - Usuario dice: "qué pasó con Argentina" → query: "Argentina noticias hoy últimas"
-    
-    Args:
-        query: Query de búsqueda optimizado (NO el texto literal del usuario)
     """
     return search.search_web(query)
 
 @tool
 def buscar_noticias(query: str) -> str:
-    """Busca NOTICIAS recientes sobre un tema. Usa esta cuando pregunten por noticias o actualidad.
-    IMPORTANTE: Genera un query optimizado, NO copies el texto literal del usuario.
-    
-    Args:
-        query: Query de búsqueda de noticias optimizado
+    """Busca NOTICIAS recientes sobre un tema.
     """
     return search.search_news(query)
 
 @tool  
 def crear_suscripcion(tema: str) -> str:
     """Crea una alerta diaria. Todos los días a las 9 AM recibirá un resumen sobre el tema.
-    
-    Args:
-        tema: Tema a seguir (ej: 'IPSA', 'Precio del cobre', 'Bitcoin')
     """
-    return "PENDING_USER_PHONE"
+    return "SUBSCRIPTION_CREATE_PENDING"
 
 @tool
 def listar_suscripciones() -> str:
     """Muestra todas las suscripciones/alertas diarias activas del usuario."""
-    return "PENDING_USER_PHONE"
+    return "SUBSCRIPTION_LIST_PENDING"
 
 @tool
 def cancelar_suscripcion(tema: str) -> str:
     """Cancela una alerta diaria.
-    
-    Args:
-        tema: Tema de la suscripción a cancelar
     """
-    return "PENDING_USER_PHONE"
+    return "SUBSCRIPTION_CANCEL_PENDING"
 
 
 # Bind tools
@@ -410,10 +353,6 @@ async def agent_process(text: str, phone_number: str) -> str:
 def execute_tool(name: str, args: dict, phone_number: str) -> str:
     """Ejecuta una herramienta y retorna el resultado como string."""
     
-    def safe_float(v):
-        try: return float(str(v).replace('"', '').replace('$', '').replace(',', '').replace('.', '').strip())
-        except: return 0.0
-
     def execute_agendar(a):
         """Crea evento en calendario + recordatorio + devuelve respuesta formateada."""
         tz = pytz.timezone(config.TIMEZONE)
