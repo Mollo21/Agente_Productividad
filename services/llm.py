@@ -153,8 +153,12 @@ def buscar_noticias(query: str) -> str:
     return search.search_news(query)
 
 @tool  
-def crear_suscripcion(tema: str) -> str:
-    """Crea una alerta diaria. Todos los días a las 9 AM recibirá un resumen sobre el tema.
+def crear_suscripcion(tema: str, hora_exacta: str = "09:00") -> str:
+    """Crea una alerta diaria. Recibirás un resumen sobre el tema a la hora indicada.
+    
+    Args:
+        tema: Tema a seguir (ej: 'IPSA Chile', 'Bitcoin', 'Noticias Cobre')
+        hora_exacta: Hora en formato HH:MM (ej: '09:35', '21:00'). Defecto '09:00'
     """
     return "SUBSCRIPTION_CREATE_PENDING"
 
@@ -216,28 +220,26 @@ FORMATO: YYYY-MM-DDTHH:MM:SS-04:00
 IMPORTANTE: Cuando la herramienta agendar retorne un resultado, DEVUELVE ESE RESULTADO TAL CUAL al usuario, SIN modificarlo. El mensaje ya viene formateado perfectamente.
 
 ═══════════════════════════════════════════════
-🔍 REGLAS DE BÚSQUEDA
+🔍 REGLAS DE BÚSQUEDA Y FINANZAS
 ═══════════════════════════════════════════════
 
-NUNCA busques el texto LITERAL del usuario. SIEMPRE optimiza el query.
-Para NOTICIAS → usa buscar_noticias
-Para INFO GENERAL → usa buscar_internet
+1. NUNCA busques el texto LITERAL del usuario. SIEMPRE optimiza el query.
+2. Si piden PRECIOS o VALORES (IPSA, dólar, cobre):
+   - BUSCA: "[Tema] precio hoy tiempo real" o "[Tema] valor actualizado hoy"
+   - Si piden Yahoo Finance, busca: "[Tema] Yahoo Finance today"
+3. Para NOTICIAS → usa buscar_noticias
+4. Para INFO GENERAL → usa buscar_internet
 
-Cuando presentes resultados de búsqueda:
-- Resume los puntos más relevantes
-- Incluye datos numéricos si los hay
-- NO copies los resultados tal cual, sintetiza
-
-═══════════════════════════════════════════════
-💰 FINANZAS
-═══════════════════════════════════════════════
-- Moneda: CLP (pesos chilenos)
-- "15 lucas" = 15000
+Cuando presentes resultados:
+- Prioriza información que tenga la fecha de HOY.
+- Si ves que un dato es de hace meses, advierte que es antiguo.
+- Resume lo valioso y usa emojis.
 
 ═══════════════════════════════════════════════
-📍 CONTEXTO
+💰 CLIMA Y PESOS
 ═══════════════════════════════════════════════
-- País: Chile, Timezone: America/Santiago (-04:00)
+- Moneda: CLP (pesos chilenos). 15 lucas = 15000.
+- Ubicación por defecto: Chile.
 """
 
 # ==================== HISTORIAL ====================
@@ -439,7 +441,7 @@ def execute_tool(name: str, args: dict, phone_number: str) -> str:
         "consultar_memoria": lambda a: google_api.search_memory(a['consulta']),
         "buscar_internet": lambda a: search.search_web(a['query']),
         "buscar_noticias": lambda a: search.search_news(a['query']),
-        "crear_suscripcion": lambda a: scheduler.add_subscription(a['tema'], "0 9 * * *", phone_number),
+        "crear_suscripcion": lambda a: scheduler.add_subscription(a['tema'], a.get('hora_exacta', '09:00'), phone_number),
         "listar_suscripciones": lambda a: scheduler.list_subscriptions(phone_number),
         "cancelar_suscripcion": lambda a: scheduler.remove_subscription(a['tema'], phone_number),
     }

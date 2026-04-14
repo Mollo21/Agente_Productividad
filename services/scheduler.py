@@ -12,9 +12,8 @@ logger = logging.getLogger(__name__)
 
 scheduler = AsyncIOScheduler(timezone=config.TIMEZONE)
 
-# Diccionario simple en memoria para guardar suscripciones (idealmente guardar en DB/Sheets)
-subscriptions = {}
-
+# Memoria temporal para la sesión actual
+subscriptions_memory = {}
 
 async def run_subscription(topic: str, phone_number: str):
     """Ejecuta la suscripción: busca la info de forma comprensiva y se la envía al usuario."""
@@ -24,21 +23,19 @@ async def run_subscription(topic: str, phone_number: str):
     search_results = search_topic_comprehensive(topic)
     
     # 2. Resumir con LLM para un mensaje WhatsApp conciso y útil
-    prompt = f"""Eres un analista de noticias. Con la siguiente información sobre '{topic}', crea un resumen ejecutivo para WhatsApp.
-
-REGLAS:
-- Máximo 5 puntos clave, cada uno en 1-2 líneas
-- Usa emojis relevantes
-- Si hay datos numéricos (precios, %, etc.) inclúyelos
-- Incluye la tendencia general (sube, baja, estable, etc.) si aplica
-- Sé directo y útil, no rellenes
-
-INFORMACIÓN RECOPILADA:
-{search_results}"""
+    prompt = f"""Eres un analista de noticias experto. Con la siguiente información sobre '{topic}', crea un resumen ejecutivo.
+    IMPORTANTE: Si el tema es sobre el IPSA o valores financieros, menciona el valor actual si aparece en la información.
+    
+    REGLAS:
+    - Máximo 5 puntos clave
+    - Usa emojis relevantes
+    - Sé directo y útil
+    
+    INFORMACIÓN RECOPILADA:
+    {search_results}"""
 
     resumen = await generate_response(prompt)
     
-    # 3. Enviar mensaje
     tz = pytz.timezone(config.TIMEZONE)
     ahora = datetime.datetime.now(tz)
     fecha_str = ahora.strftime("%d/%m/%Y %H:%M")
@@ -46,149 +43,116 @@ INFORMACIÓN RECOPILADA:
     msg = f"🔔 *Actualización diaria: {topic}*\n📅 {fecha_str}\n\n{resumen}"
     await send_whatsapp_message(phone_number, msg)
 
-
 def add_subscription(topic: str, cron_expression: str, phone_number: str):
-    """
-    Agrega una rutina diaria.
-    """
+    """Agrega rutina diaria con persistencia en Google Sheets."""
     job_id = f"sub_{topic.replace(' ', '_').lower()}_{phone_number}"
     
-    # Parsear cron expression si viene completa, sino usar defaults de 9AM
     hour = 9
     minute = 0
     try:
-        parts = cron_expression.strip().split()
-        if len(parts) >= 2:
-            minute = int(parts[0])
-            hour = int(parts[1])
-    except (ValueError, IndexError):
-        pass
+        if ":" in cron_expression:
+            hour, minute = map(int, cron_expression.split(":"))
+        else:
+            parts = cron_expression.strip().split()
+            if len(parts) >= 2:
+                minute = int(parts[0])
+                hour = int(parts[1])
+    except: pass
     
-    job = scheduler.add_job(
+    # Cargar en el scheduler
+    scheduler.add_job(
         run_subscription,
         CronTrigger(hour=hour, minute=minute, timezone=config.TIMEZONE),
         args=[topic, phone_number],
         id=job_id,
         replace_existing=True
     )
-    subscriptions[job_id] = {"topic": topic, "phone": phone_number, "hour": hour, "minute": minute}
-    return f"✅ Suscripción creada: Te enviaré un resumen completo sobre '{topic}' todos los días a las {hour}:{minute:02d}."
-
+    
+    # Guardar en memoria de sesión
+    subscriptions_memory[job_id] = {"topic": topic, "phone": phone_number, "hour": hour, "minute": minute}
+    
+    # GUARDAR EN GOOGLE SHEETS PARA SIEMPRE
+    from services.google_api import save_subscription
+    save_subscription(topic, hour, minute, phone_number)
+    
+    return f"✅ Suscripción creada: Te enviaré un resumen completo sobre '{topic}' todos los días a las {hour:02d}:{minute:02d}. Guardado en Google Sheets."
 
 def remove_subscription(topic: str, phone_number: str):
-    """Elimina una rutina."""
     job_id = f"sub_{topic.replace(' ', '_').lower()}_{phone_number}"
+    
     if scheduler.get_job(job_id):
         scheduler.remove_job(job_id)
-        if job_id in subscriptions:
-            del subscriptions[job_id]
-        return f"✅ Suscripción de '{topic}' cancelada correctamente."
-    return f"No tenías ninguna suscripción activa para '{topic}'."
-
+    
+    if job_id in subscriptions_memory:
+        del subscriptions_memory[job_id]
+        
+    from services.google_api import delete_subscription_sheet
+    delete_subscription_sheet(topic, phone_number)
+    
+    return f"✅ Suscripción de '{topic}' eliminada."
 
 def list_subscriptions(phone_number: str) -> str:
-    """Lista todas las suscripciones activas del usuario."""
-    user_subs = {k: v for k, v in subscriptions.items() if phone_number in k}
+    # Combinar memoria de sesión con lo que hay en el sheet (simplificado: leer del sheet)
+    from services.google_api import get_all_subscriptions
+    subs = get_all_subscriptions()
+    user_subs = [s for s in subs if s[0] == phone_number]
+    
     if not user_subs:
-        return "No tienes suscripciones activas."
+        return "No tienes suscripciones activas registradas."
     
-    lines = []
-    for job_id, info in user_subs.items():
-        if isinstance(info, dict):
-            lines.append(f"• {info['topic']} — todos los días a las {info['hour']}:{info['minute']:02d}")
-        else:
-            lines.append(f"• {info}")
-    
+    lines = [f"• {s[1]} — todos los días a las {s[2]}" for s in user_subs]
     return "📋 *Tus suscripciones activas:*\n" + "\n".join(lines)
 
-
 async def send_reminder(phone_number: str, text: str, event_time_iso: str = None):
-    """Tarea que envía el recordatorio por WhatsApp con formato premium."""
     tz = pytz.timezone(config.TIMEZONE)
     ahora = datetime.datetime.now(tz)
     
     if event_time_iso:
         try:
             event_dt = dateutil.parser.isoparse(event_time_iso)
-            if event_dt.tzinfo is None:
-                event_dt = tz.localize(event_dt)
-            
-            diff = event_dt - ahora
-            mins_left = int(diff.total_seconds() / 60)
-            fecha_str = event_dt.strftime('%d-%m-%Y')
-            hora_str = event_dt.strftime('%H:%M')
-            
-            msg = f"⏰ Tienes un evento próximamente\n\n"
-            msg += f"📅 Fecha: {fecha_str}\n\n"
-            msg += f"🔔 {text} - {hora_str}\n"
-            msg += f"  📝 {text}\n"
-            
-            if mins_left > 0:
-                msg += f"  ⏳ Comienza en {mins_left} minutos\n"
-            else:
-                msg += f"  🚨 ¡Comienza AHORA!\n"
-            
-            msg += f"\n¡No olvides prepararte! ¿Necesitas algo más?"
-        except Exception:
-            msg = f"🔔 *RECORDATORIO*\n\n📝 {text}\n📅 {ahora.strftime('%d-%m-%Y %H:%M')}"
+            if event_dt.tzinfo is None: event_dt = tz.localize(event_dt)
+            mins_left = int((event_dt - ahora).total_seconds() / 60)
+            msg = f"⏰ Recordatorio: {text}\n📅 {event_dt.strftime('%d-%m-%Y %H:%M')}\n🚨 ¡Comienza en {mins_left} minutos!"
+        except:
+            msg = f"🔔 Recordatorio: {text}"
     else:
-        fecha_str = ahora.strftime('%d-%m-%Y')
-        hora_str = ahora.strftime('%H:%M')
+        msg = f"🔔 Recordatorio: {text}"
         
-        msg = f"⏰ Tienes un recordatorio\n\n"
-        msg += f"📅 Fecha: {fecha_str}\n\n"
-        msg += f"🔔 {text} - {hora_str}\n"
-        msg += f"  📝 {text}\n"
-        msg += f"\n¿Hay algo más en lo que pueda ayudarte?"
-    
     await send_whatsapp_message(phone_number, msg)
 
-
 def add_reminder_at_datetime(iso_datetime: str, texto: str, phone_number: str, event_time_iso: str = None) -> str:
-    """
-    Programa un recordatorio para una fecha/hora ISO específica.
-    Esta es la función PRINCIPAL para recordatorios.
-    iso_datetime: cuándo disparar el recordatorio
-    event_time_iso: cuándo es el evento real (para mostrar en el mensaje)
-    """
     try:
         tz = pytz.timezone(config.TIMEZONE)
         run_at = dateutil.parser.isoparse(iso_datetime)
+        if run_at.tzinfo is None: run_at = tz.localize(run_at)
         
-        # Si no tiene timezone, asumir Chile
-        if run_at.tzinfo is None:
-            run_at = tz.localize(run_at)
-        
-        ahora = datetime.datetime.now(tz)
-        if run_at <= ahora:
-            return f"⚠️ La fecha/hora ({run_at.strftime('%d/%m/%Y %H:%M')}) ya pasó. No puedo programar un recordatorio en el pasado."
-        
+        if run_at <= datetime.datetime.now(tz):
+            return "La hora ya pasó."
+            
         scheduler.add_job(
-            send_reminder,
-            'date',
-            run_date=run_at,
+            send_reminder, 'date', run_date=run_at,
             args=[phone_number, texto, event_time_iso or iso_datetime]
         )
-        return f"✅ Recordatorio programado: '{texto}' para el {run_at.strftime('%d/%m/%Y a las %H:%M')}."
+        return f"✅ Recordatorio programado para las {run_at.strftime('%H:%M')}."
     except Exception as e:
-        logger.error(f"Error programando recordatorio: {e}")
-        return f"❌ Error programando recordatorio: {str(e)}"
-
-
-def add_reminder_minutes(minutos: int, texto: str, phone_number: str) -> str:
-    """Programa un recordatorio para dentro de X minutos (mantener por compatibilidad)."""
-    tz = pytz.timezone(config.TIMEZONE)
-    run_at = datetime.datetime.now(tz) + datetime.timedelta(minutes=max(1, minutos))
-    
-    scheduler.add_job(
-        send_reminder,
-        'date',
-        run_date=run_at,
-        args=[phone_number, texto, None]
-    )
-    return f"✅ Te recordaré '{texto}' en {minutos} minutos (a las {run_at.strftime('%H:%M')}). "
-
+        return f"Error: {e}"
 
 def start_scheduler():
+    """Inicia y carga suscripciones de Sheets."""
     scheduler.start()
-    logger.info("Scheduler iniciado correctamente.")
+    from services.google_api import get_all_subscriptions
+    subs = get_all_subscriptions()
+    count = 0
+    for s in subs:
+        if len(s) >= 3:
+            try:
+                phone, topic, time_str = s[0], s[1], s[2]
+                hour, minute = map(int, time_str.split(":"))
+                job_id = f"sub_{topic.replace(' ', '_').lower()}_{phone}"
+                scheduler.add_job(
+                    run_subscription, CronTrigger(hour=hour, minute=minute, timezone=config.TIMEZONE),
+                    args=[topic, phone], id=job_id, replace_existing=True
+                )
+                count += 1
+            except: continue
+    logger.info(f"Scheduler listo. {count} suscripciones cargadas.")
