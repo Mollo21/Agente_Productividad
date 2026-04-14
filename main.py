@@ -18,6 +18,60 @@ async def startup_event():
 def health_check():
     return {"status": "ok", "agent": "online"}
 
+@app.get("/diagnostico")
+def diagnostico():
+    """Endpoint para verificar que TODOS los servicios están funcionando."""
+    import os
+    from services import google_api
+    
+    results = {}
+    
+    # 1. Google Credentials
+    creds_from_env = bool(os.getenv("GOOGLE_CREDENTIALS_JSON"))
+    creds_from_file = os.path.exists(config.GOOGLE_CREDENTIALS_FILE)
+    results["google_credentials"] = {
+        "from_env_var": creds_from_env,
+        "from_file": creds_from_file,
+        "method": "ENV_VAR" if creds_from_env else ("FILE" if creds_from_file else "NINGUNO ❌"),
+    }
+    
+    # 2. Google Calendar
+    if google_api.calendar_service:
+        try:
+            # Intentar leer eventos (solo 1, para probar)
+            import datetime
+            now = datetime.datetime.utcnow().isoformat() + 'Z'
+            events = google_api.calendar_service.events().list(
+                calendarId=google_api.CALENDAR_ID,
+                timeMin=now, maxResults=1, singleEvents=True
+            ).execute()
+            results["google_calendar"] = "✅ CONECTADO - Acceso a " + google_api.CALENDAR_ID
+        except Exception as e:
+            results["google_calendar"] = f"❌ ERROR: {str(e)[:200]}"
+    else:
+        results["google_calendar"] = "❌ NO INICIALIZADO - calendar_service es None"
+    
+    # 3. Google Sheets
+    if google_api.sheets_service and config.GOOGLE_SHEETS_ID:
+        try:
+            google_api.sheets_service.spreadsheets().get(
+                spreadsheetId=config.GOOGLE_SHEETS_ID
+            ).execute()
+            results["google_sheets"] = "✅ CONECTADO"
+        except Exception as e:
+            results["google_sheets"] = f"❌ ERROR: {str(e)[:200]}"
+    else:
+        results["google_sheets"] = "❌ NO INICIALIZADO"
+    
+    # 4. Groq API Key
+    results["groq_api_key"] = "✅ Configurada" if config.GROQ_API_KEY else "❌ NO configurada"
+    
+    # 5. WhatsApp
+    results["whatsapp_token"] = "✅ Configurado" if config.WHATSAPP_TOKEN else "❌ NO configurado"
+    results["whatsapp_phone_id"] = config.WHATSAPP_PHONE_NUMBER_ID or "❌ NO configurado"
+    
+    return {"diagnostico": results}
+
 @app.get("/webhook")
 def verify_webhook(request: Request):
     """Endpoint de verificación para Meta WhatsApp API."""
