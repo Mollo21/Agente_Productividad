@@ -41,22 +41,34 @@ def get_google_services():
             except Exception as e:
                 logger.error(f"Error leyendo archivo de credenciales: {e}")
     
-    if not creds:
-        return None, None
-    
+def ensure_sheet_exists(sheet_name: str, headers: list):
+    """Verifica si una pestaña existe, si no, la crea con cabeceras."""
+    if not sheets_service: return
     try:
-        sheets_service = build('sheets', 'v4', credentials=creds)
-        calendar_service = build('calendar', 'v3', credentials=creds)
-        return sheets_service, calendar_service
+        spreadsheet = sheets_service.spreadsheets().get(spreadsheetId=config.GOOGLE_SHEETS_ID).execute()
+        sheets = [s.get('properties', {}).get('title') for s in spreadsheet.get('sheets', [])]
+        
+        if sheet_name not in sheets:
+            logger.info(f"Creando pestaña faltante: {sheet_name}")
+            body = {'requests': [{'addSheet': {'properties': {'title': sheet_name}}}]}
+            sheets_service.spreadsheets().batchUpdate(spreadsheetId=config.GOOGLE_SHEETS_ID, body=body).execute()
+            
+            # Agregar cabeceras
+            sheets_service.spreadsheets().values().update(
+                spreadsheetId=config.GOOGLE_SHEETS_ID,
+                range=f"{sheet_name}!A1",
+                valueInputOption="USER_ENTERED",
+                body={'values': [headers]}
+            ).execute()
     except Exception as e:
-        logger.error(f"Error construyendo servicios de Google: {e}")
-        return None, None
+        logger.error(f"Error asegurando pestaña {sheet_name}: {e}")
 
 sheets_service, calendar_service = get_google_services()
 
 # --- FINANZAS ---
 def log_expense(amount: float, category: str, description: str):
     if not sheets_service or not config.GOOGLE_SHEETS_ID: return "❌ No Sheets"
+    ensure_sheet_exists("Finanzas", ["Fecha", "Monto", "Categoria", "Descripcion"])
     date_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     values = [[date_str, amount, category, description]]
     try:
@@ -114,6 +126,7 @@ def get_calendar_events(time_min: str, time_max: str):
 # --- MEMORIA ---
 def save_memory(topic: str, detail: str):
     if not sheets_service: return "❌ No Sheets"
+    ensure_sheet_exists("Memoria", ["Fecha", "Tema", "Detalle"])
     values = [[datetime.datetime.now().strftime("%Y-%m-%d"), topic, detail]]
     try:
         sheets_service.spreadsheets().values().append(
@@ -134,6 +147,7 @@ def search_memory(query: str):
 # --- SUSCRIPCIONES (Persistencia) ---
 def save_subscription(topic: str, hour: int, minute: int, phone_number: str):
     if not sheets_service: return False
+    ensure_sheet_exists("Suscripciones", ["Telefono", "Tema", "Hora"])
     values = [[phone_number, topic, f"{hour:02d}:{minute:02d}"]]
     try:
         sheets_service.spreadsheets().values().append(
