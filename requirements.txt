@@ -8,7 +8,7 @@ google-api-python-client
 google-auth-httplib2
 google-auth-oauthlib
 apscheduler
-duckduckgo-search
+ddgs
 python-dotenv
 python-multipart
 pytz

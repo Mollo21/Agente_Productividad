@@ -1,4 +1,4 @@
-from duckduckgo_search import DDGS
+from ddgs import DDGS
 import logging
 
 logger = logging.getLogger(__name__)
@@ -48,20 +48,20 @@ def search_topic_comprehensive(topic: str) -> str:
     """
     all_results = []
     
-    # Variaciones de búsqueda para cubrir más ángulos del tema
+    # Variaciones simples para DuckDuckGo (prefiere queries cortos)
     search_variations = [
-        f"{topic} últimas noticias hoy",
-        f"{topic} actualización reciente",
-        f"{topic} análisis tendencias",
+        f"{topic} noticias",
+        f"{topic}",
     ]
     
     try:
         with DDGS() as ddgs:
             for search_query in search_variations:
                 try:
-                    results = list(ddgs.news(search_query, max_results=4))
+                    # DuckDuckGo falla si el query de noticias es muy específico
+                    results = list(ddgs.news(search_query, max_results=5))
                     if not results:
-                        results = list(ddgs.text(search_query, max_results=4))
+                        results = list(ddgs.text(search_query, max_results=5))
                     
                     for r in results:
                         title = r.get('title', '')
