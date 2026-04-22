@@ -267,6 +267,54 @@ def delete_subscription_sheet(topic: str, phone_number: str):
             new_rows.append(r)
         if deleted:
             sheets_service.spreadsheets().values().clear(spreadsheetId=config.GOOGLE_SHEETS_ID, range="Suscripciones!A:Z").execute()
-            sheets_service.spreadsheets().values().update(spreadsheetId=config.GOOGLE_SHEETS_ID, range="Suscripciones!A1", valueInputOption="USER_ENTERED", body={'values': new_rows}).execute()
         return deleted
     except: return False
+
+# --- RECORDATORIOS (One-off) ---
+def save_reminder_sheet(phone_number: str, text: str, run_at_iso: str, event_time_iso: str):
+    if not sheets_service: return False
+    ensure_sheet_exists("Recordatorios", ["Telefono", "Texto", "RunAtISO", "EventTimeISO"])
+    values = [[phone_number, text, run_at_iso, event_time_iso]]
+    try:
+        sheets_service.spreadsheets().values().append(
+            spreadsheetId=config.GOOGLE_SHEETS_ID, range="Recordatorios!A:D",
+            valueInputOption="USER_ENTERED", body={'values': values}
+        ).execute()
+        return True
+    except: return False
+
+def get_all_reminders_sheet():
+    if not sheets_service: return []
+    try:
+        rows = sheets_service.spreadsheets().values().get(
+            spreadsheetId=config.GOOGLE_SHEETS_ID, range="Recordatorios!A:D"
+        ).execute().get('values', [])
+        return rows[1:] if rows and len(rows)>0 else []
+    except: return []
+
+def delete_reminder_sheet(phone_number: str, text: str, run_at_iso: str):
+    if not sheets_service: return False
+    try:
+        rows = sheets_service.spreadsheets().values().get(
+            spreadsheetId=config.GOOGLE_SHEETS_ID, range="Recordatorios!A:D"
+        ).execute().get('values', [])
+        if not rows: return False
+        
+        new_rows = [rows[0]]
+        deleted = False
+        for r in rows[1:]:
+            if len(r) >= 3 and r[0] == phone_number and r[1] == text and r[2] == run_at_iso:
+                deleted = True
+                continue
+            new_rows.append(r)
+            
+        if deleted:
+            sheets_service.spreadsheets().values().clear(spreadsheetId=config.GOOGLE_SHEETS_ID, range="Recordatorios!A:Z").execute()
+            sheets_service.spreadsheets().values().update(
+                spreadsheetId=config.GOOGLE_SHEETS_ID, range="Recordatorios!A1", 
+                valueInputOption="USER_ENTERED", body={'values': new_rows}
+            ).execute()
+        return deleted
+    except Exception as e:
+        logger.error(f"Error borrando recordatorio: {e}")
+        return False

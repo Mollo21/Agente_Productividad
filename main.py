@@ -3,9 +3,13 @@ from pydantic import BaseModel
 import config
 from services import whatsapp, llm, scheduler
 import logging
+import collections
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Caché para deduplicar mensajes de webhook de WhatsApp
+processed_message_ids = collections.deque(maxlen=1000)
 
 app = FastAPI(title="WhatsApp Personal Agent")
 
@@ -93,6 +97,15 @@ async def process_incoming_message(value: dict):
             return
 
         msg = messages[0]
+        msg_id = msg.get("id")
+        
+        # Deduplicación: Meta a veces envía el mismo webhook varias veces (retrys)
+        if msg_id:
+            if msg_id in processed_message_ids:
+                logger.info(f"Mensaje duplicado descartado: {msg_id}")
+                return
+            processed_message_ids.append(msg_id)
+
         phone_number = msg.get("from")
         msg_type = msg.get("type")
         

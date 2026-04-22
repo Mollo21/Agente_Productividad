@@ -383,8 +383,9 @@ def execute_tool(name: str, args: dict, phone_number: str) -> str:
         else:
             fin_dt = inicio_dt + datetime.timedelta(hours=1)
         
-        # Recordatorio: si no se especifica, usar misma hora que inicio
+        # Recordatorio: si no se especifica, usar misma hora que inicio o 15 mins antes
         recordatorio_iso = a.get('recordatorio_iso', '').strip()
+        ahora = datetime.datetime.now(tz)
         if recordatorio_iso:
             try:
                 recordatorio_dt = dateutil.parser.isoparse(recordatorio_iso)
@@ -393,7 +394,11 @@ def execute_tool(name: str, args: dict, phone_number: str) -> str:
             except:
                 recordatorio_dt = inicio_dt
         else:
-            recordatorio_dt = inicio_dt
+            dif_mins = (inicio_dt - ahora).total_seconds() / 60
+            if dif_mins > 15:
+                recordatorio_dt = inicio_dt - datetime.timedelta(minutes=15)
+            else:
+                recordatorio_dt = inicio_dt
         
         # 1. Crear evento en Google Calendar
         cal_result = google_api.add_calendar_event(

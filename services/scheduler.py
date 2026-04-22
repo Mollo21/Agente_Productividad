@@ -103,7 +103,7 @@ def list_subscriptions(phone_number: str) -> str:
     lines = [f"• {s[1]} — todos los días a las {s[2]}" for s in user_subs]
     return "📋 *Tus suscripciones activas:*\n" + "\n".join(lines)
 
-async def send_reminder(phone_number: str, text: str, event_time_iso: str = None):
+async def send_reminder(phone_number: str, text: str, event_time_iso: str = None, run_at_iso: str = None):
     tz = pytz.timezone(config.TIMEZONE)
     ahora = datetime.datetime.now(tz)
     
@@ -111,7 +111,8 @@ async def send_reminder(phone_number: str, text: str, event_time_iso: str = None
         try:
             event_dt = dateutil.parser.isoparse(event_time_iso)
             if event_dt.tzinfo is None: event_dt = tz.localize(event_dt)
-            mins_left = int((event_dt - ahora).total_seconds() / 60)
+            mins_left = int((event_dt.timestamp() - ahora.timestamp()) / 60)
+            if mins_left < 0: mins_left = 0
             msg = f"⏰ Recordatorio: {text}\n📅 {event_dt.strftime('%d-%m-%Y %H:%M')}\n🚨 ¡Comienza en {mins_left} minutos!"
         except:
             msg = f"🔔 Recordatorio: {text}"
@@ -119,6 +120,12 @@ async def send_reminder(phone_number: str, text: str, event_time_iso: str = None
         msg = f"🔔 Recordatorio: {text}"
         
     await send_whatsapp_message(phone_number, msg)
+    
+    # Eliminar de Google Sheets de forma asíncrona para no bloquear
+    if run_at_iso:
+        from services.google_api import delete_reminder_sheet
+        import asyncio
+        asyncio.create_task(asyncio.to_thread(delete_reminder_sheet, phone_number, text, run_at_iso))
 
 def add_reminder_at_datetime(iso_datetime: str, texto: str, phone_number: str, event_time_iso: str = None) -> str:
     try:
@@ -131,16 +138,20 @@ def add_reminder_at_datetime(iso_datetime: str, texto: str, phone_number: str, e
             
         scheduler.add_job(
             send_reminder, 'date', run_date=run_at,
-            args=[phone_number, texto, event_time_iso or iso_datetime]
+            args=[phone_number, texto, event_time_iso or iso_datetime, iso_datetime]
         )
+        
+        from services.google_api import save_reminder_sheet
+        save_reminder_sheet(phone_number, texto, iso_datetime, event_time_iso or iso_datetime)
+        
         return f"✅ Recordatorio programado para las {run_at.strftime('%H:%M')}."
     except Exception as e:
         return f"Error: {e}"
 
 def start_scheduler():
-    """Inicia y carga suscripciones de Sheets."""
+    """Inicia y carga suscripciones y recordatorios desde Sheets."""
     scheduler.start()
-    from services.google_api import get_all_subscriptions
+    from services.google_api import get_all_subscriptions, get_all_reminders_sheet
     subs = get_all_subscriptions()
     count = 0
     for s in subs:
@@ -156,3 +167,27 @@ def start_scheduler():
                 count += 1
             except: continue
     logger.info(f"Scheduler listo. {count} suscripciones cargadas.")
+    
+    rems = get_all_reminders_sheet()
+    count_rems = 0
+    tz = pytz.timezone(config.TIMEZONE)
+    for r in rems:
+        if len(r) >= 4:
+            try:
+                phone, text, run_at_iso, event_iso = r[0], r[1], r[2], r[3]
+                run_at = dateutil.parser.isoparse(run_at_iso)
+                if run_at.tzinfo is None: run_at = tz.localize(run_at)
+                
+                if run_at <= datetime.datetime.now(tz):
+                    # Si ya pasó, ejecutar en 5 segundos
+                    run_at = datetime.datetime.now(tz) + datetime.timedelta(seconds=5)
+                    
+                scheduler.add_job(
+                    send_reminder, 'date', run_date=run_at,
+                    args=[phone, text, event_iso, run_at_iso]
+                )
+                count_rems += 1
+            except Exception as e:
+                logger.error(f"Error cargando recordatorio de Sheets: {e}")
+                continue
+    logger.info(f"Cargados {count_rems} recordatorios desde Sheets.")
